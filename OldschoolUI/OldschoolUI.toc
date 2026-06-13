@@ -1,0 +1,18 @@
+## Interface: 50504
+## Title: OldschoolUI
+## Notes: OldschoolUI - a clean MoP-Classic UI suite. Core.
+## Author: Markus
+## Version: @project-version@
+## SavedVariables: OldschoolUIDB
+## SavedVariablesPerCharacter: OldschoolUICharDB
+## X-Category: User Interface
+## IconTexture: Interface\AddOns\OldschoolUI\media\oui-logo
+
+# --- Embedded libraries (Ace3) ---
+Libs\Libs.xml
+
+# --- Pass 1: Foundation + i18n + Theme ---
+Core\Bootstrap.lua
+Core\Locale.lua
+Locales\deDE.lua
+Core\Theme.lua

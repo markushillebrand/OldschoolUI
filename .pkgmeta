@@ -1,0 +1,23 @@
+# BigWigs packager config. Mirrors the proven EllesmereUI setup; the NEW bits
+# for OUI are the Ace3 externals below. Reuse your working EllesmereUI .pkgmeta
+# if you prefer and just add the externals block + rename.
+package-as: OldschoolUI
+
+enable-nolib-creation: no
+
+externals:
+  OldschoolUI/Libs/LibStub:               https://repos.curseforge.com/wow/libstub
+  OldschoolUI/Libs/CallbackHandler-1.0:   https://repos.curseforge.com/wow/callbackhandler/trunk/CallbackHandler-1.0
+  OldschoolUI/Libs/AceAddon-3.0:          https://repos.curseforge.com/wow/ace3/trunk/AceAddon-3.0
+  OldschoolUI/Libs/AceEvent-3.0:          https://repos.curseforge.com/wow/ace3/trunk/AceEvent-3.0
+  OldschoolUI/Libs/AceDB-3.0:             https://repos.curseforge.com/wow/ace3/trunk/AceDB-3.0
+  # add later if needed: AceHook-3.0, AceConsole-3.0, LibSharedMedia-3.0, LibDeflate
+
+ignore:
+  - .github
+  - "*.md"
+  - .pkgmeta
+  - .gitattributes
+  - .gitignore
+
+# CI substitutes @project-version@ in every TOC on tag-push.

@@ -1,0 +1,4 @@
+-- OldschoolUI / Core / Theme.lua
+-- Theme/Accent engine + RegAccent registry + OUI.ACCENT.
+-- Default accent: MoP-Gold #D9A441. Presets: OldschoolUI / Classic / Horde / Alliance / ...
+-- (Pass 1 implementation goes here.)

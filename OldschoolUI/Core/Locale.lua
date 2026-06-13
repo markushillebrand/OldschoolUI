@@ -1,0 +1,3 @@
+-- OldschoolUI / Core / Locale.lua
+-- i18n engine: L / Lf / RegisterLocale / EnKey. "Translate the pixels, never the data."
+-- (Pass 1 clean-room reimplementation goes here.)

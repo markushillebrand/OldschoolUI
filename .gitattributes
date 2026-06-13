@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.lua  text working-tree-encoding=UTF-8 eol=lf
+*.toc  text eol=lf
+*.xml  text eol=lf
+# Locale files MUST be UTF-8 without BOM
+Locales/*.lua text working-tree-encoding=UTF-8 eol=lf
