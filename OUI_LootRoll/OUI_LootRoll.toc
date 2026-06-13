@@ -1,0 +1,23 @@
+## Interface: 50504
+## Title: OldschoolUI Loot Roll
+## Author: Markus
+## Version: @project-version@
+## Notes: Custom group loot roll bars with countdown, roll tally, disenchant, and a mover.
+## Dependencies: OldschoolUI
+## SavedVariables: OldschoolUILootRollDB
+## SavedVariablesPerCharacter: OldschoolUILootRollCharDB
+## IconTexture: Interface\AddOns\OldschoolUI\media\oui-logo
+
+# Core roll bars
+OldschoolUILootRoll.lua
+
+# Data layers
+OUI_LootRoll_Session.lua
+OUI_LootRoll_BonusRolls.lua
+OUI_LootRoll_Wishlist.lua
+
+# UI windows (session / bonus / wishlist)
+OUI_LootRoll_Windows.lua
+
+# Options page (QoL Functions category)
+OUI_LootRoll_Options.lua

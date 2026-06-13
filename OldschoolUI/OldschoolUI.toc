@@ -4,15 +4,22 @@
 ## Author: Markus
 ## Version: @project-version@
 ## SavedVariables: OldschoolUIDB
-## SavedVariablesPerCharacter: OldschoolUICharDB
 ## X-Category: User Interface
 ## IconTexture: Interface\AddOns\OldschoolUI\media\oui-logo
 
 # --- Embedded libraries (Ace3) ---
-Libs\Libs.xml
+Libs\LibStub\LibStub.lua
+Libs\CallbackHandler-1.0\CallbackHandler-1.0.lua
+Libs\AceAddon-3.0\AceAddon-3.0.lua
+Libs\AceEvent-3.0\AceEvent-3.0.lua
+Libs\AceDB-3.0\AceDB-3.0.lua
 
 # --- Pass 1: Foundation + i18n + Theme ---
 Core\Bootstrap.lua
 Core\Locale.lua
 Locales\deDE.lua
 Core\Theme.lua
+Core\Widgets.lua
+Core\Options.lua
+Core\Mover.lua
+Core\Subsystems.lua
