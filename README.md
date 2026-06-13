@@ -1,7 +1,6 @@
 # OldschoolUI (OUI)
 
-A clean, MoP-Classic (interface 50504) UI suite. Independent rewrite — own code,
-Ace3 (MIT) embedded, no upstream EllesmereUI source.
+A clean, MoP-Classic (interface 50504) UI suite. Ace3 (MIT) embedded
 
 ## Structure
 - `OldschoolUI/` — Core addon (namespace `OldschoolUI`, alias `OUI`)
