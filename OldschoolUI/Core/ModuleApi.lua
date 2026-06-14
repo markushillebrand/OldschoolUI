@@ -153,7 +153,7 @@ function OUI.GetBorderDefaults(addonKey, textureKey, sizeKey)
     local a = _borderDefaults[addonKey]
     if not a then return 0, 0, 0, 0 end
     local byTex = a[textureKey]
-    local e = byTex and (byTex[sizeKey] or byTex.default)
+    local e = byTex and byTex.sizes and byTex.sizes[sizeKey]
     if not e then return 0, 0, 0, 0 end
     return e.offsetX or 0, e.offsetY or 0, e.shiftX or 0, e.shiftY or 0
 end

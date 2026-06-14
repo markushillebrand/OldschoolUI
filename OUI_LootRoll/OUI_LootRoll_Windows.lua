@@ -559,11 +559,17 @@ local _stackListenerDone
 local function AnchorMinimapButton(b)
     b:ClearAllPoints()
     local stack = OldschoolUI and OldschoolUI._minimapStack
-    if stack and stack.square and stack.frame then
-        -- Join the minimap's left-edge indicator stack, directly below the
-        -- lowest indicator (mail / queue / etc.). Kept in sync via the stack
-        -- listener so it follows when those appear or disappear.
-        b:SetPoint("TOPRIGHT", stack.frame, "TOPLEFT", 0, stack.y or 0)
+    if stack and stack.frame then
+        b:ClearAllPoints()
+        if stack.point then
+            -- Minimap module directs exact anchor + growth direction.
+            b:SetPoint(stack.point, stack.frame, stack.relPoint or "BOTTOM", stack.x or 0, stack.y or -4)
+        elseif stack.square then
+            -- legacy left-edge indicator stack
+            b:SetPoint("TOPRIGHT", stack.frame, "TOPLEFT", 0, stack.y or 0)
+        else
+            b:SetPoint("TOP", stack.frame, "BOTTOM", 0, -4)
+        end
         return
     end
     local q = OldschoolUI and OldschoolUI._minimapQueueBtn

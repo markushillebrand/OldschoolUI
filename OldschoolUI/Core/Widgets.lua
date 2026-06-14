@@ -53,6 +53,16 @@ local function PixelBorder(frame, r, g, b, a, accent)
             self[k]:SetColorTexture(nr, ng, nb, na or 1)
         end
     end
+    function e:SetThickness(n)
+        n = n or 1
+        if n <= 0 then
+            for _, k in ipairs({"top","bottom","left","right"}) do self[k]:Hide() end
+            return
+        end
+        self.top:SetHeight(n); self.bottom:SetHeight(n)
+        self.left:SetWidth(n); self.right:SetWidth(n)
+        for _, k in ipairs({"top","bottom","left","right"}) do self[k]:Show() end
+    end
     if accent then
         RegAccent({ type = "callback", fn = function(nr, ng, nb) e:SetColor(nr, ng, nb, a) end })
     end

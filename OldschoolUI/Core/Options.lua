@@ -282,5 +282,23 @@ OUI:RegisterModule("General", {
                 if OldschoolUIPanel then OldschoolUIPanel:SetScale(v / 100) end
             end,
         }))
+        page:AddRow(OUI.Widgets.Dropdown(page, {
+            label = "Bar texture (all modules)",
+            tooltip = "Default status-bar texture across the whole UI. Each module can override it for all of its bars, or per bar type.",
+            values = OUI.BAR_TEXTURE_NAMES, order = OUI.BAR_TEXTURE_ORDER,
+            get = function() return OUI.GetGlobalBarTextureKey() end,
+            set = function(v) OUI.SetGlobalBarTexture(v) end,
+        }))
+        page:AddRow(OUI.Widgets.ColorSwatch(page, {
+            label = "Border colour (all modules)", hasAlpha = true,
+            tooltip = "Default bar border colour across the whole UI. Modules can override per addon or per bar type.",
+            get = function() local c = OUI.GetGlobalBorderColor(); return c[1], c[2], c[3], c[4] end,
+            set = function(r, g, b, a) OUI.SetGlobalBorderColor(r, g, b, a) end,
+        }))
+        page:AddRow(OUI.Widgets.Slider(page, {
+            label = "Border size (all modules)", min = 0, max = 4, step = 1,
+            get = function() return OUI.GetGlobalBorderSize() end,
+            set = function(v) OUI.SetGlobalBorderSize(v) end,
+        }))
     end,
 })

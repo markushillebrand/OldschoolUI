@@ -113,6 +113,7 @@ end
 function OUI.PP.SetBorderSize(frame, n)
     local bd = frame and frame._ppBorder
     if not bd then return end
+    if bd.SetThickness then bd:SetThickness(n or 1); return end
     for _, k in ipairs({ "top", "bottom", "left", "right" }) do
         local t = bd[k]
         if t then if n and n <= 0 then t:Hide() else t:Show() end end
@@ -168,6 +169,29 @@ function OUI.PP.Scale(x)
     local pixels = x / m
     pixels = (x > 0) and math.floor(pixels) or math.ceil(pixels)
     return pixels * m
+end
+
+-- Snap a size/offset to the nearest whole physical pixel (rounds to nearest,
+-- unlike Scale which truncates toward zero). Cleans float dust near integers.
+function OUI.PP.Snap(x)
+    if x == 0 then return 0 end
+    local m = OUI.PP.mult
+    local result = math.floor(x / m + 0.5) * m
+    local rounded = math.floor(result + 0.5)
+    if math.abs(result - rounded) < 0.001 then result = rounded end
+    return result
+end
+
+-- Snap a value to a whole number of physical pixels at a given effective scale
+-- (onePixel = perfect / es), so sibling elements share an exact pixel size.
+function OUI.PP.SnapForES(x, es)
+    if x == 0 then return 0 end
+    es = es or 1
+    local onePixel = OUI.PP.perfect / es
+    local result = math.floor(x / onePixel + 0.5) * onePixel
+    local rounded = math.floor(result + 0.5)
+    if math.abs(result - rounded) < 0.001 then result = rounded end
+    return result
 end
 
 function OUI.PP.Point(obj, anchor, p1, p2, p3, p4)

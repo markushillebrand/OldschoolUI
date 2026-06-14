@@ -1,218 +1,101 @@
--------------------------------------------------------------------------------
---  OUI_Minimap_Options.lua
---  Config page for the minimap module, rewritten against the OldschoolUI
---  options API (RegisterModule + page:AddRow + OUI.Widgets). Single scrollable
---  page under the "Better UI Module" category. All labels/tooltips are English
---  literals routed through L() by the widget system (deDE in the core locale).
---  Settings are written into the minimap addon's AceDB profile and applied live
---  via OUI._minimapApply (the main module's ApplyMinimap), exposed in
---  OnInitialize so it is available regardless of the enabled state.
--------------------------------------------------------------------------------
+-- ===========================================================================
+--  OldschoolUI Minimap -- options page (Core RegisterModule + build()).
+-- ===========================================================================
 local _, ns = ...
 local OUI = OldschoolUI
 if not (OUI and OUI.RegisterModule) then return end
 
+local function MM() return ns.MM end
 local function DB()
-    local db = OUI._minimapDB
-    return (db and db.profile and db.profile.minimap) or {}
+    local m = ns.MM
+    return (m and m.db and m.db.profile) or {}
 end
-local function Cfg(k)    return DB()[k] end
-local function Set(k, v) DB()[k] = v end
-local function Apply()       if OUI._minimapApply then OUI._minimapApply() end end
--- Button backgrounds / sizes / grouping need a cache-wiping full rebuild.
-local function FullRebuild() if OUI._minimapFullRebuild then OUI._minimapFullRebuild() end end
-local function VisUpdate()   if OUI.RequestVisibilityUpdate then OUI.RequestVisibilityUpdate() end end
--- Sliders fire set() continuously while dragging; coalesce the (heavy) re-apply.
-local _pending
-local function Debounce(fn)
-    if _pending then return end
-    _pending = true
-    C_Timer.After(0.1, function() _pending = false; fn() end)
-end
-local function L(s)       return (OUI.L and OUI.L(s)) or s end
-
--- Accent section header with a divider line, stacked as a normal row.
-local function Header(page, text)
-    local row = CreateFrame("Frame", nil, page)
-    row:SetHeight(20)
-    local fs = OUI._label(row, 12, OUI.ACCENT.r, OUI.ACCENT.g, OUI.ACCENT.b)
-    fs:SetPoint("BOTTOMLEFT", 0, 5)
-    fs:SetText(string.upper(L(text)))
-    OUI.RegAccent({ type = "font", obj = fs })
-    local p = OUI._palette
-    local div = OUI._tex(row, "ARTWORK", p.BRD[1], p.BRD[2], p.BRD[3], 1)
-    div:SetPoint("BOTTOMLEFT", 0, 0); div:SetPoint("BOTTOMRIGHT", 0, 0); div:SetHeight(1)
-    page:AddRow(row, 8)
+local function Refresh()
+    if ns.MM then ns.MM:OptionsRefresh() end
 end
 
--- Convenience builders bound to a page.
 local function Toggle(page, label, key, tip)
     page:AddRow(OUI.Widgets.Toggle(page, {
         label = label, tooltip = tip,
-        get = function() return Cfg(key) and true or false end,
-        set = function(v) Set(key, v); Apply() end,
-    }))
-end
--- Toggle for button settings that need a cache-wiping rebuild.
-local function RebuildToggle(page, label, key, tip)
-    page:AddRow(OUI.Widgets.Toggle(page, {
-        label = label, tooltip = tip,
-        get = function() return Cfg(key) and true or false end,
-        set = function(v) Set(key, v); FullRebuild() end,
+        get = function() return DB()[key] and true or false end,
+        set = function(v) DB()[key] = v; Refresh() end,
     }))
 end
 local function Slider(page, label, key, min, max, step, dflt, tip)
     page:AddRow(OUI.Widgets.Slider(page, {
         label = label, tooltip = tip, min = min, max = max, step = step,
-        get = function() local v = Cfg(key); if v == nil then v = dflt end; return v end,
-        set = function(v) Set(key, v); Debounce(Apply) end,
+        get = function() local v = DB()[key]; if v == nil then v = dflt end; return v end,
+        set = function(v) DB()[key] = v; Refresh() end,
     }))
 end
--- Slider for button sizes (need a cache-wiping rebuild to re-snapshot).
-local function RebuildSlider(page, label, key, min, max, step, dflt, tip)
-    page:AddRow(OUI.Widgets.Slider(page, {
-        label = label, tooltip = tip, min = min, max = max, step = step,
-        get = function() local v = Cfg(key); if v == nil then v = dflt end; return v end,
-        set = function(v) Set(key, v); Debounce(FullRebuild) end,
+local function Drop(page, label, key, values, order, tip)
+    page:AddRow(OUI.Widgets.Dropdown(page, {
+        label = label, tooltip = tip, values = values, order = order,
+        get = function() return DB()[key] end,
+        set = function(v) DB()[key] = v; Refresh() end,
     }))
 end
--- Scale stored as a float (1.15) but shown/edited as a percent (115).
-local function ScaleSlider(page, label, key, tip)
-    page:AddRow(OUI.Widgets.Slider(page, {
-        label = label, tooltip = tip, min = 50, max = 200, step = 5,
-        get = function() return math.floor((Cfg(key) or 1) * 100 + 0.5) end,
-        set = function(v) Set(key, v / 100); Debounce(Apply) end,
-    }))
-end
+
+local SHAPE_VALUES = {
+    round = "Round", square = "Square", parallelogram = "Parallelogram",
+    triangle = "Triangle", trapezoid = "Trapezoid",
+}
+local SHAPE_ORDER = { "round", "square", "parallelogram", "triangle", "trapezoid" }
+
+local EDGE_VALUES = { auto = "Auto (per shape)", TOP = "Top", BOTTOM = "Bottom", LEFT = "Left", RIGHT = "Right" }
+local EDGE_ORDER  = { "auto", "TOP", "BOTTOM", "LEFT", "RIGHT" }
+
+local CLOCK_VALUES = { auto = "Server time", ["12h"] = "12-hour", ["24h"] = "24-hour" }
+local CLOCK_ORDER  = { "auto", "12h", "24h" }
 
 OUI:RegisterModule("OUI_Minimap", {
-    category    = "Better UI Module", order = 10,
+    category    = "Main Modules", order = 10,
     title       = "Minimap",
-    description = "Reskins the minimap: shape, border, clock, zone text, coordinates, indicator and addon buttons, and conditional visibility.",
+    description = "Minimap shape, size, button bin and info elements. /ouimove to reposition.",
     build = function(page)
-        local W = OUI.Widgets
+        -- Shape ----------------------------------------------------------------
+        Drop(page, "Shape", "shape", SHAPE_VALUES, SHAPE_ORDER)
+        Toggle(page, "Rounded corners", "rounded",
+            "Round the corners of non-round shapes (square, triangle, trapezoid, parallelogram).")
+        Toggle(page, "Triangle points down", "triDown",
+            "Only applies to the triangle shape: flip so the point faces down (wide base on top).")
+        Slider(page, "Width", "width", 100, 320, 2, 140)
+        Slider(page, "Height", "height", 100, 320, 2, 140)
 
-        ------------------------------------------------------------- GENERAL
-        Header(page, "General")
-        Toggle(page, "Enable", "enabled",
-            "Apply the OldschoolUI minimap skin. Disabling may require a /reload to fully restore the default minimap.")
-        page:AddRow(W.Segmented(page, {
-            label    = "Shape",
-            segments = { { value = "square", text = "Square" }, { value = "circle", text = "Circle" } },
-            get = function() return Cfg("shape") or "square" end,
-            set = function(v) Set("shape", v); Apply() end,
+        -- Border (addon-level override of the suite-global border) -------------
+        Toggle(page, "Override border", "bOverride",
+            "Use a custom border colour and size for the minimap instead of the UI-wide default.")
+        page:AddRow(OUI.Widgets.ColorSwatch(page, {
+            label = "Border Colour", hasAlpha = true,
+            get = function() local c = DB().bcol or { 0, 0, 0, 0.9 }; return c[1], c[2], c[3], c[4] end,
+            set = function(r, g, b, a) DB().bcol = { r, g, b, a or 1 }; Refresh() end,
         }))
-        Toggle(page, "Rotate Minimap", "rotateMinimap",
-            "Rotate the minimap instead of the player arrow.")
-        RebuildSlider(page, "Map Size", "mapSize", 100, 280, 4, 140,
-            "Width and height of the minimap window in pixels.")
-        Toggle(page, "Zoom with Mouse Wheel", "scrollZoom",
-            "Scroll over the minimap to zoom in and out (zoom buttons are hidden).")
-        Toggle(page, "Middle-Click Opens Micro Menu", "openMicroMenuOnMiddleClick",
-            "Middle-click the minimap to open the micro menu.")
-        Toggle(page, "Lock Position", "lock",
-            "Lock the minimap so it cannot be dragged. Use /ouimove to reposition while unlocked.")
+        Slider(page, "Border Size", "bsize", 0, 4, 1, 1)
 
-        ------------------------------------------------------------- BORDER
-        Header(page, "Border")
-        Slider(page, "Border Size", "borderSize", 0, 8, 1, 1)
-        Toggle(page, "Use Class Color", "useClassColor",
-            "Tint the minimap border with your class color.")
-        page:AddRow(W.ColorSwatch(page, {
-            label = "Border Color", hasAlpha = true,
-            tooltip = "Custom border color (ignored while Use Class Color is on).",
-            get = function() local p = DB(); return p.borderR or 0, p.borderG or 0, p.borderB or 0, p.borderA or 1 end,
-            set = function(r, g, b, a)
-                local p = DB(); p.borderR, p.borderG, p.borderB, p.borderA = r, g, b, a or 1; Apply()
-            end,
-        }))
+        -- Button bin -----------------------------------------------------------
+        Drop(page, "Button Edge", "btnEdge", EDGE_VALUES, EDGE_ORDER,
+            "Which edge the collected addon buttons and pinned extras attach to. Auto picks the best edge per shape.")
+        Slider(page, "Bin Button Size", "binBtnSize", 16, 40, 1, 24)
+        Slider(page, "Buttons Per Row", "binPerRow", 1, 12, 1, 6)
 
-        ------------------------------------------------------------- CLOCK
-        Header(page, "Clock")
+        -- Info elements --------------------------------------------------------
+        local POS, POSORDER = MM().INFO_POS_NAMES, MM().INFO_POS_ORDER
+        Toggle(page, "Show Zone Text", "showZone")
+        Drop(page, "Zone Position", "zonePos", POS, POSORDER)
         Toggle(page, "Show Clock", "showClock")
-        Toggle(page, "Clock Inside Minimap", "clockInside",
-            "Anchor the clock inside the minimap instead of below it.")
-        page:AddRow(W.Dropdown(page, {
-            label  = "Time Format",
-            values = { auto = "Automatic", ["12h"] = "12-Hour", ["24h"] = "24-Hour" },
-            order  = { "auto", "12h", "24h" },
-            get = function() return Cfg("clockFormat") or "auto" end,
-            set = function(v) Set("clockFormat", v); Apply() end,
-        }))
-        ScaleSlider(page, "Clock Scale (%)", "clockScale")
-        Slider(page, "Clock Offset X", "clockOffsetX", -60, 60, 1, 0)
-        Slider(page, "Clock Offset Y", "clockOffsetY", -60, 60, 1, 0)
+        Drop(page, "Clock Format", "clockFormat", CLOCK_VALUES, CLOCK_ORDER)
+        Drop(page, "Clock Position", "clockPos", POS, POSORDER)
+        Toggle(page, "Show Coordinates", "showCoords")
+        Drop(page, "Coordinates Position", "coordsPos", POS, POSORDER)
+        Toggle(page, "Show Mail Indicator", "showMail")
+        Drop(page, "Mail Position", "mailPos", POS, POSORDER)
 
-        ------------------------------------------------------------- ZONE TEXT
-        Header(page, "Zone Text")
-        Toggle(page, "Hide Zone Text", "hideZoneText")
-        Toggle(page, "Zone Text Inside Minimap", "zoneInside",
-            "Anchor the zone name inside the minimap instead of below it.")
-        ScaleSlider(page, "Zone Text Scale (%)", "locationScale")
-        Slider(page, "Zone Text Offset X", "locationOffsetX", -60, 60, 1, 0)
-        Slider(page, "Zone Text Offset Y", "locationOffsetY", -60, 60, 1, 0)
-
-        ------------------------------------------------------------- COORDINATES
-        Header(page, "Coordinates")
-        Toggle(page, "Show Coordinates Below Map", "coordsBelow",
-            "Always show player coordinates centered below the minimap (otherwise they appear on mouseover).")
-        Slider(page, "Coordinate Decimals", "coordPrecision", 0, 2, 1, 0)
-
-        ------------------------------------------------------------- INDICATORS
-        Header(page, "Indicators")
-        Toggle(page, "Hide Tracking Button", "hideTrackingButton")
-        Toggle(page, "Hide Calendar", "hideGameTime")
-        Toggle(page, "Hide Mail Icon", "hideMail")
-        Toggle(page, "Hide Raid Difficulty", "hideRaidDifficulty")
-        Toggle(page, "Extra Buttons on Mouseover Only", "mouseoverExtraBtns",
-            "Friends and group buttons only appear while the mouse is over the minimap.")
-        page:AddRow(W.Toggle(page, {
-            label = "Hide Friends Button",
-            get = function() local p = DB(); return p.hideExtraBtns and p.hideExtraBtns.friendsOnline or false end,
-            set = function(v)
-                local p = DB(); p.hideExtraBtns = p.hideExtraBtns or {}; p.hideExtraBtns.friendsOnline = v; Apply()
-            end,
-        }))
-        page:AddRow(W.Toggle(page, {
-            label = "Hide Group Button",
-            get = function() local p = DB(); return p.hideExtraBtns and p.hideExtraBtns.groupButton or false end,
-            set = function(v)
-                local p = DB(); p.hideExtraBtns = p.hideExtraBtns or {}; p.hideExtraBtns.groupButton = v; Apply()
-            end,
-        }))
-
-        ------------------------------------------------------------- ADDON BUTTONS
-        Header(page, "Addon Buttons")
-        RebuildToggle(page, "Hide Addon Compartment", "hideAddonCompartment",
-            "Hide the Blizzard addon-compartment button on the minimap.")
-        RebuildToggle(page, "Hide Addon Buttons", "hideAddonButtons",
-            "Hide third-party addon minimap buttons entirely.")
-        RebuildToggle(page, "Button Backgrounds", "btnBackgrounds",
-            "Draw a dark backing behind grouped minimap buttons.")
-        RebuildToggle(page, "Free-Move Buttons", "freeMoveBtns",
-            "Let ungrouped buttons be dragged freely instead of auto-stacking.")
-        RebuildSlider(page, "Interactable Button Size", "interactableBtnSize", 14, 32, 1, 21)
-        RebuildSlider(page, "Addon Button Size", "addonBtnSize", 14, 40, 1, 24)
-
-        ------------------------------------------------------------- VISIBILITY
-        Header(page, "Visibility")
-        local visOrder = {}
-        for _, k in ipairs(OUI.VIS_ORDER) do
-            if k ~= "---" then visOrder[#visOrder + 1] = k end
-        end
-        page:AddRow(W.Dropdown(page, {
-            label  = "Minimap Visibility",
-            values = OUI.VIS_VALUES, order = visOrder,
-            tooltip = "When the whole minimap is shown.",
-            get = function() return Cfg("visibility") or "always" end,
-            set = function(v) Set("visibility", v); VisUpdate(); Apply() end,
-        }))
-        for _, item in ipairs(OUI.VIS_OPT_ITEMS) do
-            page:AddRow(W.Checkbox(page, {
-                label = item.label, tooltip = item.tooltip,
-                get = function() return Cfg(item.key) and true or false end,
-                set = function(v) Set(item.key, v); VisUpdate() end,
-            }))
-        end
+        -- Indicator buttons (shown in the pinned row) + visibility -------------
+        Toggle(page, "Show Tracking Button", "showTracking")
+        Toggle(page, "Show Friends Button", "showFriends")
+        Toggle(page, "Show Group Finder Button", "showLFG")
+        Toggle(page, "Fade out unless hovered", "mouseFade",
+            "Fade the whole minimap when you're not hovering it (always shown in combat).")
+        Slider(page, "Faded opacity (%)", "mouseFadeAlpha", 0, 100, 5, 0)
     end,
 })

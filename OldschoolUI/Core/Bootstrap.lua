@@ -26,6 +26,9 @@ local DEFAULTS = {
         useClassAccentColor = false,
         displayLocale       = "auto",     -- "auto" | locale code
         scope               = "global",   -- "global" | "character"
+        barTexture          = "flat",      -- shared default status-bar texture key
+        borderColor         = { 0, 0, 0, 0.9 }, -- shared default border colour
+        borderSize          = 1,           -- shared default border thickness (px)
     },
     char = {},
 }

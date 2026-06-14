@@ -139,3 +139,98 @@ if not OUI.Glows then
         StartFlipBookGlow = noop, StopFlipBookGlow = noop,
     }
 end
+
+-------------------------------------------------------------------------------
+--  Shared status-bar texture registry
+--  A single list of selectable bar textures used across modules, plus a global
+--  default (OUI.db.global.barTexture). Modules read GetBarTexturePath(key) and
+--  may register a listener to re-skin when the global default changes.
+-------------------------------------------------------------------------------
+do
+    local BASE = "Interface\\AddOns\\OldschoolUI\\media\\textures\\"
+    OUI.BAR_TEXTURES = {
+        flat            = "Interface\\Buttons\\WHITE8x8",
+        melli           = BASE .. "melli.tga",
+        beautiful       = BASE .. "beautiful.tga",
+        plating         = BASE .. "plating.tga",
+        matte           = BASE .. "matte.tga",
+        glass           = BASE .. "glass.tga",
+        sheer           = BASE .. "sheer.tga",
+        atrocity        = BASE .. "atrocity.tga",
+        divide          = BASE .. "divide.tga",
+        ["soft-line"]   = BASE .. "soft-line.tga",
+        fade            = BASE .. "fade.tga",
+        ["gradient-lr"] = BASE .. "gradient-lr.tga",
+    }
+    OUI.BAR_TEXTURE_ORDER = {
+        "flat", "melli", "beautiful", "plating", "matte", "glass",
+        "sheer", "atrocity", "divide", "soft-line", "fade", "gradient-lr",
+    }
+    OUI.BAR_TEXTURE_NAMES = {
+        flat = "Flat", melli = "Melli", beautiful = "Beautiful", plating = "Plating",
+        matte = "Matte", glass = "Glass", sheer = "Sheer", atrocity = "Atrocity",
+        divide = "Divide", ["soft-line"] = "Soft Line", fade = "Fade",
+        ["gradient-lr"] = "Gradient",
+    }
+end
+
+-- Resolve a bar-texture key to a path. A nil/empty key falls back to the global
+-- default; an unknown key falls back to "flat".
+function OUI.GetBarTexturePath(key)
+    if not key or key == "" then
+        key = (OUI.db and OUI.db.global and OUI.db.global.barTexture) or "flat"
+    end
+    return OUI.BAR_TEXTURES[key] or OUI.BAR_TEXTURES.flat
+end
+
+function OUI.GetGlobalBarTextureKey()
+    return (OUI.db and OUI.db.global and OUI.db.global.barTexture) or "flat"
+end
+
+local _barTexListeners = {}
+function OUI.RegisterBarTextureListener(fn)
+    if fn then _barTexListeners[#_barTexListeners + 1] = fn end
+end
+-- Canonical name: any global style change (texture, border, …) notifies these.
+OUI.RegisterStyleListener = OUI.RegisterBarTextureListener
+local function NotifyStyle()
+    for _, fn in ipairs(_barTexListeners) do pcall(fn) end
+end
+OUI.NotifyStyle = NotifyStyle
+
+-- Set the global default texture and notify every registered module to re-skin.
+function OUI.SetGlobalBarTexture(key)
+    if OUI.db and OUI.db.global then OUI.db.global.barTexture = key end
+    NotifyStyle()
+end
+
+-------------------------------------------------------------------------------
+--  Shared border style (colour + size), same 3-tier model as bar textures
+-------------------------------------------------------------------------------
+function OUI.GetGlobalBorderColor()
+    local c = OUI.db and OUI.db.global and OUI.db.global.borderColor
+    if c then return { c[1], c[2], c[3], c[4] or 1 } end
+    return { 0, 0, 0, 0.9 }
+end
+function OUI.SetGlobalBorderColor(r, g, b, a)
+    if OUI.db and OUI.db.global then OUI.db.global.borderColor = { r, g, b, a or 1 } end
+    NotifyStyle()
+end
+function OUI.GetGlobalBorderSize()
+    return (OUI.db and OUI.db.global and OUI.db.global.borderSize) or 1
+end
+function OUI.SetGlobalBorderSize(n)
+    if OUI.db and OUI.db.global then OUI.db.global.borderSize = n end
+    NotifyStyle()
+end
+
+-- Reusable 3-tier resolver for any per-module style system. Given a module's
+-- profile, a key prefix, and a bar-type tag ("Health"/"Power"/…), returns which
+-- scope's value should win: "type" (profile[prefix.."Override"..which] set),
+-- else "all" (profile[prefix.."OverrideAll"] set), else "global". The module
+-- then reads its own prefix..which / prefix.."All" keys, or the suite-global.
+function OUI.ResolveStyleScope(profile, prefix, which)
+    if profile[prefix .. "Override" .. which] then return "type" end
+    if profile[prefix .. "OverrideAll"] then return "all" end
+    return "global"
+end

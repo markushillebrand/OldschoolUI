@@ -2,9 +2,9 @@
 ## Title: OldschoolUI Minimap
 ## Author: Markus
 ## Version: @project-version@
-## Notes: Custom minimap skin, indicators, micro menu, tracking, and queue button.
+## Notes: Minimap shape, button bin and info elements.
 ## Dependencies: OldschoolUI
 ## SavedVariables: OldschoolUIMinimapDB
 
-OldschoolUIMinimap.lua
+OUI_Minimap.lua
 OUI_Minimap_Options.lua
