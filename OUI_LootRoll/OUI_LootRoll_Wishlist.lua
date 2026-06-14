@@ -1,5 +1,5 @@
 -------------------------------------------------------------------------------
---  EUI_LootRoll_Wishlist.lua
+--  OUI_LootRoll_Wishlist.lua
 --  Loot wishlist: pre-pick items you want from raid bosses (via the Encounter
 --  Journal, localized) per difficulty bucket (Normal / Heroic / LFR). Items are
 --  auto-checked-off the moment the character receives them by ANY means

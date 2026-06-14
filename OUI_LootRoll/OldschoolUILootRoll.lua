@@ -2,7 +2,7 @@
 -- OldschoolUILootRoll.lua
 --
 -- Custom group-loot roll bars for MoP Classic. Replaces Blizzard's default
--- GroupLootFrame with stacked EUI-styled bars: item icon, quality-colored
+-- GroupLootFrame with stacked OUI-styled bars: item icon, quality-colored
 -- border + name, a countdown status bar, Need / Greed / Disenchant / Pass
 -- buttons, and a live per-button roll tally sourced from C_LootHistory
 -- (locale-independent, unlike the old ElvUI chat-parse approach).
@@ -15,9 +15,9 @@
 -------------------------------------------------------------------------------
 local addonName, ns = ...
 
-local ELR = {}
-ns.ELR = ELR
-_G.OldschoolUILootRoll = ELR
+local LR = {}
+ns.LR = LR
+_G.OldschoolUILootRoll = LR
 
 local CreateFrame, UIParent = CreateFrame, UIParent
 local GetLootRollItemInfo  = GetLootRollItemInfo
@@ -86,7 +86,6 @@ local function EnsureDB()
     local AceDB = LibStub and LibStub("AceDB-3.0", true)
     if not AceDB then return nil end
     _db = AceDB:New("OldschoolUILootRollDB", DEFAULTS)
-    _G._ELR_DB = _db
     return _db
 end
 local function DB()
@@ -94,8 +93,8 @@ local function DB()
     if d and d.profile and d.profile.lootRoll then return d.profile.lootRoll end
     return DEFAULTS.profile.lootRoll
 end
-ns.LR_GetSettings = DB  -- exposed for EUI_LootRoll_BonusRolls / _Session
-ELR.DB = DB
+ns.LR_GetSettings = DB  -- exposed for OUI_LootRoll_BonusRolls / _Session
+LR.DB = DB
 
 local function L(s) return (OldschoolUI and OldschoolUI.L and OldschoolUI.L(s)) or s end
 local function FontPath()
@@ -150,7 +149,7 @@ local function Restack()
         end
     end
 end
-ELR.Restack = Restack
+LR.Restack = Restack
 
 -------------------------------------------------------------------------------
 -- Bar widgets / scripts
@@ -488,8 +487,8 @@ local function SuppressBlizzard()
     end
     if _G.GroupLootContainer then
         _G.GroupLootContainer:Hide()
-        if not ELR._gcHooked and _G.GroupLootContainer_AddFrame then
-            ELR._gcHooked = true
+        if not LR._gcHooked and _G.GroupLootContainer_AddFrame then
+            LR._gcHooked = true
             hooksecurefunc("GroupLootContainer_AddFrame", function()
                 if DB().enabled and _G.GroupLootContainer then _G.GroupLootContainer:Hide() end
             end)
@@ -500,7 +499,7 @@ end
 -------------------------------------------------------------------------------
 -- Rebuild (after layout-affecting option changes)
 -------------------------------------------------------------------------------
-function ELR.Rebuild()
+function LR.Rebuild()
     local db = DB()
     for _, b in ipairs(bars) do
         b:SetSize(db.width or 328, db.height or 28)
@@ -536,7 +535,7 @@ local function RegisterMover()
     local MK = OldschoolUI.MakeUnlockElement
     OldschoolUI:RegisterUnlockElements({
         MK({
-            key = "EUI_LootRoll", label = "Loot Roll", group = "Loot Roll", order = 650,
+            key = "OUILootRoll", label = "Loot Roll", group = "Loot Roll", order = 650,
             noResize = true, noAnchorTo = true,
             getFrame = function() return EnsureAnchor() end,
             getSize  = function() return (DB().width or 328), (DB().height or 28) end,
@@ -556,7 +555,7 @@ end
 -------------------------------------------------------------------------------
 -- Sim / preview  (/ouilr test)
 -------------------------------------------------------------------------------
-function ELR.StartSim()
+function LR.StartSim()
     local bar = GetBar()
     bar._sim = true
     bar.rollID = -1
@@ -585,17 +584,17 @@ function ELR.StartSim()
     end
     bar:Show()
     Restack()
-    if ELR._simTicker then ELR._simTicker:Cancel() end
-    ELR._simTicker = C_Timer.NewTicker(0.1, function()
+    if LR._simTicker then LR._simTicker:Cancel() end
+    LR._simTicker = C_Timer.NewTicker(0.1, function()
         if not bar._sim then return end
         bar._simLeft = (bar._simLeft or 0) - 100
-        if bar._simLeft <= 0 then ELR.StopSim() end
+        if bar._simLeft <= 0 then LR.StopSim() end
     end)
     print("|cff66ccffOUI-LR|r "..L("Sim started. /ouilr stop to end."))
 end
 
-function ELR.StopSim()
-    if ELR._simTicker then ELR._simTicker:Cancel(); ELR._simTicker = nil end
+function LR.StopSim()
+    if LR._simTicker then LR._simTicker:Cancel(); LR._simTicker = nil end
     for _, b in ipairs(bars) do
         if b._sim then b._sim = false; b.rollID = nil; b._simLeft = nil; b:Hide() end
     end
@@ -666,9 +665,9 @@ SLASH_OUILR1 = "/ouilr"
 SlashCmdList["OUILR"] = function(msg)
     msg = (msg or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
     if msg == "test" or msg == "sim" then
-        ELR.StartSim()
+        LR.StartSim()
     elseif msg == "stop" or msg == "off" then
-        ELR.StopSim()
+        LR.StopSim()
         print("|cff66ccffOUI-LR|r "..L("Sim stopped."))
     else
         print("|cff66ccffOUI-LR|r "..L("Commands: /ouilr test | stop"))

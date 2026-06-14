@@ -23,3 +23,5 @@ Core\Widgets.lua
 Core\Options.lua
 Core\Mover.lua
 Core\Subsystems.lua
+Core\Media.lua
+Core\ModuleApi.lua

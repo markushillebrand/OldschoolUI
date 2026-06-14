@@ -8,12 +8,12 @@
 local _, ns = ...
 local OUI = OldschoolUI
 if not (OUI and OUI.RegisterModule) then return end
-local ELR = ns.ELR
+local LR = ns.LR
 
 local function DB()    return ns.LR_GetSettings and ns.LR_GetSettings() or {} end
 local function Cfg(k)  return DB()[k] end
 local function Set(k, v) DB()[k] = v end
-local function Apply() if ELR and ELR.Rebuild then ELR.Rebuild() end end
+local function Apply() if LR and LR.Rebuild then LR.Rebuild() end end
 local function L(s)    return (OUI.L and OUI.L(s)) or s end
 
 -- Accent section header with a divider line, stacked as a normal row.

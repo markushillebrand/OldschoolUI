@@ -554,9 +554,18 @@ end
 --  so it tracks wherever our Minimap module repositions GameTimeFrame.
 -------------------------------------------------------------------------------
 local minimapBtn
+local _stackListenerDone
 
 local function AnchorMinimapButton(b)
     b:ClearAllPoints()
+    local stack = OldschoolUI and OldschoolUI._minimapStack
+    if stack and stack.square and stack.frame then
+        -- Join the minimap's left-edge indicator stack, directly below the
+        -- lowest indicator (mail / queue / etc.). Kept in sync via the stack
+        -- listener so it follows when those appear or disappear.
+        b:SetPoint("TOPRIGHT", stack.frame, "TOPLEFT", 0, stack.y or 0)
+        return
+    end
     local q = OldschoolUI and OldschoolUI._minimapQueueBtn
     local cal = OldschoolUI and OldschoolUI._minimapCalendarBtn
     if q and q:IsShown() then
@@ -615,6 +624,12 @@ function ns.LR_RefreshMinimapButton()
     if show then
         CreateMinimapButton()
         if minimapBtn then AnchorMinimapButton(minimapBtn); minimapBtn:Show() end
+        if not _stackListenerDone and OldschoolUI and OldschoolUI.RegisterMinimapStackListener then
+            _stackListenerDone = true
+            OldschoolUI.RegisterMinimapStackListener(function()
+                if minimapBtn and minimapBtn:IsShown() then AnchorMinimapButton(minimapBtn) end
+            end)
+        end
     elseif minimapBtn then
         minimapBtn:Hide()
     end

@@ -123,6 +123,70 @@ function OUI.MakeBorder(frame, r, g, b, a, _size)
     return OUI.PP.CreateBorder(frame, r, g, b, a)
 end
 
+function OUI.PP.HideBorder(frame)
+    local bd = frame and frame._ppBorder
+    if not bd then return end
+    for _, k in ipairs({ "top", "bottom", "left", "right" }) do
+        if bd[k] then bd[k]:Hide() end
+    end
+end
+
+function OUI.PP.ShowBorder(frame)
+    local bd = frame and frame._ppBorder
+    if not bd then return end
+    for _, k in ipairs({ "top", "bottom", "left", "right" }) do
+        if bd[k] then bd[k]:Show() end
+    end
+end
+
+-- Pixel-perfect coordinate snapping: keep 1px borders/bars crisp at any UI
+-- scale. PP.Scale snaps an offset to the physical pixel grid; Point/Size/Width
+-- wrap SetPoint/SetSize/SetWidth with snapping.
+OUI.PP.perfect = 1
+OUI.PP.mult    = 1
+local function RecalcPP()
+    local ph
+    if GetPhysicalScreenSize then local _; _, ph = GetPhysicalScreenSize() end
+    OUI.PP.perfect = (ph and ph > 0) and (768 / ph) or 1
+    local uiScale = (UIParent and UIParent:GetScale()) or 1
+    if uiScale == 0 then uiScale = 1 end
+    OUI.PP.mult = OUI.PP.perfect / uiScale
+end
+do
+    local f = CreateFrame("Frame")
+    f:RegisterEvent("PLAYER_LOGIN")
+    f:RegisterEvent("UI_SCALE_CHANGED")
+    f:RegisterEvent("DISPLAY_SIZE_CHANGED")
+    f:SetScript("OnEvent", RecalcPP)
+    RecalcPP()
+end
+
+function OUI.PP.Scale(x)
+    if x == 0 then return 0 end
+    local m = OUI.PP.mult
+    if m == 1 then return x end
+    local pixels = x / m
+    pixels = (x > 0) and math.floor(pixels) or math.ceil(pixels)
+    return pixels * m
+end
+
+function OUI.PP.Point(obj, anchor, p1, p2, p3, p4)
+    if not p1 then p1 = obj:GetParent() end
+    if type(p1) == "number" then p1 = OUI.PP.Scale(p1) end
+    if type(p2) == "number" then p2 = OUI.PP.Scale(p2) end
+    if type(p3) == "number" then p3 = OUI.PP.Scale(p3) end
+    if type(p4) == "number" then p4 = OUI.PP.Scale(p4) end
+    obj:SetPoint(anchor, p1, p2, p3, p4)
+end
+
+function OUI.PP.Size(frame, w, h)
+    frame:SetSize(OUI.PP.Scale(w), h and OUI.PP.Scale(h) or OUI.PP.Scale(w))
+end
+
+function OUI.PP.Width(frame, w)
+    frame:SetWidth(OUI.PP.Scale(w))
+end
+
 -- =====================================================================
 --  Visibility dispatcher  (conditional show/hide; returns "mouseover"/bool)
 -- =====================================================================

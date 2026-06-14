@@ -1,5 +1,5 @@
 -------------------------------------------------------------------------------
---  EUI_LootRoll_BonusRolls.lua
+--  OUI_LootRoll_BonusRolls.lua
 --  Character-specific bonus-roll history + gold/item ratio.
 --
 --  Bonus rolls (Elder Charm / Mogu Rune / Warforged Seal) are a MoP feature.

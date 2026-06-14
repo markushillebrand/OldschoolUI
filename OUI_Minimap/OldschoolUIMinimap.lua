@@ -1,0 +1,3083 @@
+-------------------------------------------------------------------------------
+--  OldschoolUIMinimap.lua
+--  Custom minimap skin and layout for OldschoolUI.
+-------------------------------------------------------------------------------
+local ADDON_NAME = ...
+
+local MM = LibStub("AceAddon-3.0"):NewAddon("OldschoolUIMinimap")
+
+local PP = OldschoolUI.PP
+
+local EG = OldschoolUI.ACCENT
+
+-- External weak-keyed lookup table for frame state (prevents tainting Blizzard frames)
+local FFD = setmetatable({}, { __mode = "k" })
+local function GetFFD(frame)
+    local d = FFD[frame]
+    if not d then d = {}; FFD[frame] = d end
+    return d
+end
+
+-- TEMP_DISABLED kept for call-site compat with helper functions that still
+-- reference it. Minimap module is never force-disabled here.
+local TEMP_DISABLED = {}
+
+local defaults = {
+    profile = {
+        minimap = {
+            enabled       = true,
+            shape         = "square",
+            rotateMinimap = false,
+            borderSize    = 1,
+            coordPrecision = 0,
+            borderR       = 0, borderG = 0, borderB = 0, borderA = 1,
+            useClassColor = false,
+            hideZoneText  = false,
+            zoneInside    = false,
+            scrollZoom    = true,
+            openMicroMenuOnMiddleClick = true,
+            savedZoom     = 0,
+            hideZoomButtons      = true,
+            hideTrackingButton   = true,
+            hideGameTime         = false,
+            hideMail             = false,
+            hideRaidDifficulty   = false,
+            hideExtraBtns        = { friendsOnline = false, groupButton = false },
+            mouseoverExtraBtns   = false,  -- extra buttons only show on minimap mouseover
+            hideAddonCompartment = false,
+            hideAddonButtons     = false,
+            addonBtnSize         = 24,
+            interactableBtnSize  = 21,
+            ungroupedButtons     = {},
+            freeMoveBtns         = false,
+            btnBackgrounds       = true,
+            btnPositions         = {},
+            showClock     = true,
+            clockInside   = true,
+            clockFormat   = "auto",
+            clockScale    = 1.15,
+            clockOffsetX  = 0,
+            clockOffsetY  = 0,
+            locationScale = 1.15,
+            locationOffsetX = 0,
+            locationOffsetY = 0,
+            lock          = false,
+            position      = nil,
+            visibility    = "always",
+            visOnlyInstances = false,
+            visHideMounted   = false,
+            visHideNoTarget  = false,
+            visHideNoEnemy   = false,
+        },
+    },
+}
+
+-------------------------------------------------------------------------------
+--  Utility
+-------------------------------------------------------------------------------
+local function GetBorderColor(cfg)
+    if cfg.useClassColor then
+        -- Flag name is legacy ("useClassColor") but both minimap and friends
+        -- now use the live OldschoolUI accent color when it's set. The flag
+        -- name is kept as-is for backwards compat with stored SV data.
+        return EG.r, EG.g, EG.b, 1
+    end
+    return cfg.borderR, cfg.borderG, cfg.borderB, cfg.borderA or 1
+end
+
+-------------------------------------------------------------------------------
+--  Combat safety
+-------------------------------------------------------------------------------
+local pendingApply = false
+local ApplyAll  -- forward declaration
+
+local function QueueApplyAll()
+    if pendingApply then return end
+    pendingApply = true
+end
+
+local combatFrame = CreateFrame("Frame")
+combatFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+combatFrame:SetScript("OnEvent", function()
+    if pendingApply then
+        pendingApply = false
+        ApplyAll()
+    end
+end)
+
+-------------------------------------------------------------------------------
+--  Minimap Skin
+-------------------------------------------------------------------------------
+local minimapDecorations = {
+    "MinimapBorder",
+    "MinimapBorderTop",
+    "MinimapBackdrop",
+    "MinimapNorthTag",
+    "MinimapCompassTexture",
+    "TimeManagerClockButton",
+}
+
+local minimapButtonMap = {
+    { key = "hideZoomButtons",      names = { "MinimapZoomIn", "MinimapZoomOut" } },
+    { key = "hideTrackingButton",   names = { "MiniMapTrackingButton" } },
+    { key = "hideGameTime",         names = { "GameTimeFrame" } },
+    { key = "hideMail",             names = { "MiniMapMailFrame" } },
+    { key = "hideRaidDifficulty",   names = { "MiniMapInstanceDifficulty", "GuildInstanceDifficulty" } },
+    { key = "hideAddonCompartment", names = { "AddonCompartmentFrame" } },
+}
+
+local minimapButtonHooks = {}
+
+local function HideMinimapButton(name)
+    local btn = _G[name]
+    if not btn then return end
+    btn:Hide()
+    btn:SetAlpha(0)
+    if not minimapButtonHooks[name] then
+        hooksecurefunc(btn, "Show", function(self)
+            if InCombatLockdown() then return end
+            local mp = MM.db and MM.db.profile.minimap
+            if not mp then return end
+            for _, entry in ipairs(minimapButtonMap) do
+                for _, btnName in ipairs(entry.names) do
+                    if btnName == name and mp[entry.key] then
+                        self:SetAlpha(0)
+                        return
+                    end
+                end
+            end
+        end)
+        minimapButtonHooks[name] = true
+    end
+end
+
+local function ShowMinimapButton(name)
+    local btn = _G[name]
+    if not btn then return end
+    btn:SetAlpha(1)
+    btn:EnableMouse(true)
+    btn:Show()
+end
+
+-- Forward declarations for flyout system
+local addonButtonPoll = nil
+local cachedAddonButtons = {}
+local _addonVisible = {}       -- persistent: tracks whether each addon WANTS its button visible
+local _suppressVisTrack = false -- flag to suppress tracking during our own Show/Hide calls
+local flyoutOwnedFrames = {}
+
+-- Mouseover Extra Buttons: re-evaluator, assigned by the controller further down.
+-- Forward-declared here so the flyout panels (created earlier than the
+-- controller) can trigger a re-evaluate from their OnShow/OnHide hooks.
+local MO_Evaluate
+
+-------------------------------------------------------------------------------
+--  Minimap Button Flyout
+-------------------------------------------------------------------------------
+local flyoutToggle = nil   -- the square trigger button
+local flyoutPanel  = nil   -- the popup grid container
+local flyoutSavedParents = {}  -- original parent/point data for restore
+local flyoutSavedRegions = {}  -- original region states for restore
+
+local FLYOUT_BTN_SIZE = 24
+local FLYOUT_PADDING  = 4
+local FLYOUT_COLS     = 4
+
+-- Textures that are decorative borders/backgrounds on minimap buttons
+local MINIMAP_BTN_JUNK = {
+    [136467] = true,  -- UI-Minimap-Background
+    [136430] = true,  -- MiniMap-TrackingBorder
+    [136477] = true,  -- UI-Minimap-ZoomButton-Highlight (used on some buttons)
+}
+local MINIMAP_BTN_JUNK_PATH = {
+    ["Interface\\Minimap\\MiniMap%-TrackingBorder"] = true,
+    ["Interface\\Minimap\\UI%-Minimap%-Background"] = true,
+    ["Interface\\Minimap\\UI%-Minimap%-ZoomButton%-Highlight"] = true,
+}
+
+local function IsJunkTexture(region)
+    if not region or not region.IsObjectType or not region:IsObjectType("Texture") then
+        return false
+    end
+    local texID = region.GetTextureFileID and region:GetTextureFileID()
+    if texID and MINIMAP_BTN_JUNK[texID] then return true end
+    local texPath = region:GetTexture()
+    if texPath and type(texPath) == "string" then
+        for pattern in pairs(MINIMAP_BTN_JUNK_PATH) do
+            if texPath:match(pattern) then return true end
+        end
+    end
+    return false
+end
+
+local function StripButtonDecorations(btn)
+    -- Only snapshot original state once; subsequent calls just re-hide
+    if not flyoutSavedRegions[btn] then
+        local saved = { junk = {} }
+        for _, region in ipairs({ btn:GetRegions() }) do
+            if IsJunkTexture(region) then
+                saved.junk[#saved.junk + 1] = { region = region, alpha = region:GetAlpha(), shown = region:IsShown() }
+            end
+        end
+        local hl = btn.GetHighlightTexture and btn:GetHighlightTexture()
+        if hl and IsJunkTexture(hl) then
+            saved.junk[#saved.junk + 1] = { region = hl, alpha = hl:GetAlpha(), shown = hl:IsShown() }
+        end
+        -- Snapshot icon anchors/texcoord so we can restore native layout
+        local icon = btn.icon or btn.Icon
+        if icon then
+            local nPts = icon:GetNumPoints()
+            local pts = {}
+            for i = 1, nPts do
+                pts[i] = { icon:GetPoint(i) }
+            end
+            saved.icon = icon
+            saved.iconPoints = pts
+            saved.iconTC = { icon:GetTexCoord() }
+        end
+        -- Snapshot native button size
+        saved.btnW, saved.btnH = btn:GetWidth(), btn:GetHeight()
+        flyoutSavedRegions[btn] = saved
+    end
+    -- Hide junk textures (runs every call)
+    for _, info in ipairs(flyoutSavedRegions[btn].junk) do
+        info.region:SetAlpha(0)
+        info.region:Hide()
+    end
+end
+
+local function RestoreButtonDecorations(btn)
+    local saved = flyoutSavedRegions[btn]
+    if not saved then return end
+    for _, info in ipairs(saved.junk) do
+        info.region:SetAlpha(info.alpha)
+        if info.shown then info.region:Show() end
+    end
+    -- Restore icon anchors and texcoord
+    if saved.icon and saved.iconPoints then
+        saved.icon:ClearAllPoints()
+        for _, pt in ipairs(saved.iconPoints) do
+            saved.icon:SetPoint(pt[1], pt[2], pt[3], pt[4], pt[5])
+        end
+        if saved.iconTC and #saved.iconTC >= 8 then
+            saved.icon:SetTexCoord(unpack(saved.iconTC))
+        end
+    end
+    -- Restore native button size
+    if saved.btnW and saved.btnH then
+        btn:SetSize(saved.btnW, saved.btnH)
+    end
+    flyoutSavedRegions[btn] = nil
+end
+
+local function IsUngrouped(btn)
+    local mp = MM.db and MM.db.profile.minimap
+    if not mp or not mp.ungroupedButtons then return false end
+    local name = btn:GetName()
+    return name and mp.ungroupedButtons[name]
+end
+
+local function GetMinimapButtonLabel(btn)
+    local name = btn:GetName() or ""
+    return name:gsub("^LibDBIcon10_", ""):gsub("^Lib_GPI_Minimap_", ""):gsub("MinimapButton$", ""):gsub("_MinimapButton$", "")
+end
+
+local function CollectFlyoutButtons()
+    -- Return only buttons the addon wants visible and not ungrouped
+    local collected = {}
+    for _, btn in ipairs(cachedAddonButtons) do
+        if _addonVisible[btn] ~= false and not IsUngrouped(btn) then
+            collected[#collected + 1] = btn
+        end
+    end
+    table.sort(collected, function(a, b)
+        return GetMinimapButtonLabel(a):lower() < GetMinimapButtonLabel(b):lower()
+    end)
+    return collected
+end
+
+local function GetAddonBtnSize()
+    local mp = MM.db and MM.db.profile.minimap
+    return mp and mp.addonBtnSize or FLYOUT_BTN_SIZE
+end
+
+local function LayoutFlyoutButtons()
+    if not flyoutPanel then return end
+    local buttons = CollectFlyoutButtons()
+    local count = #buttons
+    if count == 0 then
+        flyoutPanel:SetSize(1, 1)
+        return
+    end
+
+    local btnSize = GetAddonBtnSize()
+    local cols = math.min(count, FLYOUT_COLS)
+    local rows = math.ceil(count / cols)
+    local pw = FLYOUT_PADDING + cols * (btnSize + FLYOUT_PADDING)
+    local ph = FLYOUT_PADDING + rows * (btnSize + FLYOUT_PADDING)
+    flyoutPanel:SetSize(pw, ph)
+
+    for i, btn in ipairs(buttons) do
+        -- Save original parent/points for restore
+        if not flyoutSavedParents[btn] then
+            local p1, rel, p2, ox, oy = btn:GetPoint(1)
+            flyoutSavedParents[btn] = {
+                parent = btn:GetParent(),
+                strata = btn:GetFrameStrata(),
+                point = p1, relTo = rel, relPoint = p2, x = ox, y = oy,
+            }
+        end
+
+        local col = (i - 1) % cols
+        local row = math.floor((i - 1) / cols)
+        local xOff = FLYOUT_PADDING + col * (btnSize + FLYOUT_PADDING)
+        local yOff = -(FLYOUT_PADDING + row * (btnSize + FLYOUT_PADDING))
+
+        btn:SetParent(flyoutPanel)
+        -- Unlock fixed strata/level first (LibDBIcon locks these)
+        if btn.SetFixedFrameStrata then btn:SetFixedFrameStrata(false) end
+        if btn.SetFixedFrameLevel then btn:SetFixedFrameLevel(false) end
+        btn:SetFrameStrata("DIALOG")
+        if btn.SetFixedFrameStrata then btn:SetFixedFrameStrata(true) end
+        btn:ClearAllPoints()
+        btn:SetPoint("TOPLEFT", flyoutPanel, "TOPLEFT", xOff, yOff)
+        btn:SetSize(btnSize, btnSize)
+        _suppressVisTrack = true
+        btn:SetAlpha(1)
+        btn:Show()
+        _suppressVisTrack = false
+        btn:SetFrameLevel(flyoutPanel:GetFrameLevel() + 5)
+        if btn.SetFixedFrameLevel then btn:SetFixedFrameLevel(true) end
+        -- Strip decorative border/background textures
+        StripButtonDecorations(btn)
+        -- Hide ungrouped overlays left over from a previous ungroup cycle
+        if GetFFD(btn).ungroupBg then GetFFD(btn).ungroupBg:Hide() end
+        if btn._ungroupRing then btn._ungroupRing:Hide() end
+        -- Also force all child frames up to the same strata/level
+        for _, child in ipairs({ btn:GetChildren() }) do
+            child:SetFrameStrata("DIALOG")
+            child:SetFrameLevel(flyoutPanel:GetFrameLevel() + 6)
+        end
+        -- Normalize icon region to fill the button cleanly
+        local icon = btn.icon or btn.Icon
+        if not icon then
+            for _, region in ipairs({ btn:GetRegions() }) do
+                if region:IsObjectType("Texture") and region:IsShown()
+                   and region:GetAlpha() > 0 and not IsJunkTexture(region) then
+                    icon = region
+                    break
+                end
+            end
+        end
+        if icon then
+            icon:ClearAllPoints()
+            icon:SetPoint("TOPLEFT", btn, "TOPLEFT", 2, -2)
+            icon:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", -2, 2)
+            pcall(icon.SetTexCoord, icon, 0.05, 0.95, 0.05, 0.95)
+        end
+        -- Add atlas ring border overlay
+        if not GetFFD(btn).flyoutRing then
+            local ring = btn:CreateTexture(nil, "OVERLAY", nil, 7)
+            OldschoolUI.SafeAtlas(ring, "AdventureMap-combatally-ring")
+            ring:SetPoint("TOPLEFT", btn, "TOPLEFT", -3, 3)
+            ring:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", 3, -3)
+            GetFFD(btn).flyoutRing = ring
+        end
+        GetFFD(btn).flyoutRing:Show()
+    end
+end
+
+local function RestoreFlyoutButtons()
+    for btn, saved in pairs(flyoutSavedParents) do
+        RestoreButtonDecorations(btn)
+        if GetFFD(btn).flyoutRing then GetFFD(btn).flyoutRing:Hide() end
+        if btn.SetFixedFrameStrata then btn:SetFixedFrameStrata(false) end
+        if btn.SetFixedFrameLevel then btn:SetFixedFrameLevel(false) end
+        btn:SetParent(saved.parent)
+        btn:SetFrameStrata(saved.strata)
+        btn:ClearAllPoints()
+        if saved.point and saved.relTo then
+            btn:SetPoint(saved.point, saved.relTo, saved.relPoint, saved.x, saved.y)
+        end
+        -- Re-hide on the minimap surface
+        _suppressVisTrack = true
+        btn:Hide()
+        btn:SetAlpha(0)
+        _suppressVisTrack = false
+    end
+    wipe(flyoutSavedParents)
+end
+
+local _flyoutBuilt = false
+
+local function EnsureFlyoutPanel()
+    if not flyoutPanel then
+        flyoutPanel = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+        flyoutPanel:SetFrameStrata("DIALOG")
+        flyoutPanel:SetBackdrop({
+            bgFile   = "Interface\\ChatFrame\\ChatFrameBackground",
+            edgeFile = "Interface\\ChatFrame\\ChatFrameBackground",
+            edgeSize = 1,
+        })
+        flyoutPanel:SetBackdropColor(0.1, 0.1, 0.1, 0.9)
+        flyoutPanel:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
+        flyoutPanel:SetPoint("BOTTOMLEFT", flyoutToggle, "BOTTOMRIGHT", 2, 0)
+        flyoutPanel:SetClampedToScreen(true)
+        flyoutOwnedFrames[flyoutPanel] = true
+        -- Keep the mouseover stack in sync while this flyout opens/closes.
+        flyoutPanel:HookScript("OnShow", function() if MO_Evaluate then MO_Evaluate() end end)
+        flyoutPanel:HookScript("OnHide", function() if MO_Evaluate then MO_Evaluate() end end)
+    end
+end
+
+-- Build the flyout contents once. Buttons are reparented into the grid
+-- and stay there permanently. Only rebuilds when the button list changes
+-- (new addon loaded, button ungrouped, etc).
+local function BuildFlyoutContents()
+    EnsureFlyoutPanel()
+    LayoutFlyoutButtons()
+    _flyoutBuilt = true
+end
+
+-- Force a rebuild on next show (called when button list changes)
+local function InvalidateFlyout()
+    _flyoutBuilt = false
+end
+
+-- Profile-swap refresh: re-show buttons in the flyout and invalidate
+-- so the next open rebuilds with new settings. Also re-asserts alpha
+-- on buttons that may have been hidden by re-initialization.
+_G._EMIN_RefreshFlyout = function()
+    InvalidateFlyout()
+    if flyoutPanel and flyoutPanel:IsShown() then
+        BuildFlyoutContents()
+    end
+    -- Re-assert alpha on buttons in the flyout (profile swap may have
+    -- re-hidden them via HideMinimapChild during re-init)
+    for _, btn in ipairs(cachedAddonButtons) do
+        if btn:GetParent() == flyoutPanel then
+            btn:SetAlpha(1)
+            btn:Show()
+        end
+    end
+end
+
+local function ShowFlyoutPanel()
+    EnsureFlyoutPanel()
+    -- Show the panel BEFORE layout so the Show hook on addon buttons
+    -- sees flyoutPanel:IsShown() == true and skips the alpha-zero path.
+    flyoutPanel:Show()
+    if not _flyoutBuilt then
+        BuildFlyoutContents()
+    end
+end
+
+local function HideFlyoutPanel()
+    if flyoutPanel then
+        flyoutPanel:Hide()
+        -- Do NOT restore buttons or wipe saved parents.
+        -- Buttons stay parented to the flyout panel permanently.
+    end
+end
+
+local function ToggleFlyoutPanel()
+    if flyoutPanel and flyoutPanel:IsShown() then
+        HideFlyoutPanel()
+    else
+        ShowFlyoutPanel()
+    end
+end
+
+local function GetInteractableBtnSize()
+    local mp = MM.db and MM.db.profile.minimap
+    return mp and mp.interactableBtnSize or 22
+end
+
+local function CreateFlyoutToggle()
+    if flyoutToggle then
+        -- Re-apply the current accent to the existing textures so a later
+        -- ApplyAll (e.g. at PLAYER_ENTERING_WORLD, after OldschoolUI's theme
+        -- resolution has mutated ACCENT) picks up the right color.
+        local EG2 = OldschoolUI.ACCENT
+        if flyoutToggle._norm   then flyoutToggle._norm:SetVertexColor(EG2.r, EG2.g, EG2.b, 1)   end
+        if flyoutToggle._pushed then flyoutToggle._pushed:SetVertexColor(EG2.r, EG2.g, EG2.b, 1) end
+        if flyoutToggle._hl     then flyoutToggle._hl:SetVertexColor(EG2.r, EG2.g, EG2.b, 1)     end
+        return flyoutToggle
+    end
+
+    local btn = CreateFrame("Button", nil, Minimap)
+    local iconSize = GetInteractableBtnSize()
+    btn:SetSize(iconSize, iconSize)
+    btn:SetPoint("BOTTOMRIGHT", Minimap, "BOTTOMLEFT", 0, 0)
+    btn:SetFrameLevel(Minimap:GetFrameLevel() + 10)
+
+    local norm = btn:CreateTexture(nil, "ARTWORK")
+    norm:SetAllPoints()
+    OldschoolUI.SafeAtlas(norm, "Map-Filter-Button", "Interface\\Buttons\\UI-OptionsButton")
+    norm:SetDesaturated(true)
+    norm:SetVertexColor(EG.r, EG.g, EG.b, 1)
+    btn:SetNormalTexture(norm)
+    btn._norm = norm
+
+    local pushed = btn:CreateTexture(nil, "ARTWORK")
+    pushed:SetAllPoints()
+    OldschoolUI.SafeAtlas(pushed, "Map-Filter-Button-down", "Interface\\Buttons\\UI-OptionsButton")
+    pushed:SetDesaturated(true)
+    pushed:SetVertexColor(EG.r, EG.g, EG.b, 1)
+    btn:SetPushedTexture(pushed)
+    btn._pushed = pushed
+
+    local hl = btn:CreateTexture(nil, "HIGHLIGHT")
+    hl:SetAllPoints()
+    OldschoolUI.SafeAtlas(hl, "Map-Filter-Button", "Interface\\Buttons\\UI-OptionsButton")
+    hl:SetDesaturated(true)
+    hl:SetVertexColor(EG.r, EG.g, EG.b, 1)
+    hl:SetAlpha(0.3)
+    btn:SetHighlightTexture(hl)
+    btn._hl = hl
+
+    -- Keep the three textures in sync with the accent color.
+    -- Vertex alpha stays at 1; the highlight's SetAlpha(0.3) still applies
+    -- on top since the two multiply.
+    OldschoolUI.RegAccent({ type = "vertex", obj = norm })
+    OldschoolUI.RegAccent({ type = "vertex", obj = pushed })
+    OldschoolUI.RegAccent({ type = "vertex", obj = hl })
+
+    -- Black background to match indicator icons
+    local bg = CreateFrame("Frame", nil, btn, "BackdropTemplate")
+    bg:SetBackdrop({ bgFile = "Interface\\ChatFrame\\ChatFrameBackground" })
+    bg:SetBackdropColor(0, 0, 0, 0.8)
+    bg:SetAllPoints(btn)
+    bg:SetFrameLevel(btn:GetFrameLevel() - 1)
+    btn._bg = bg
+
+    btn:SetScript("OnClick", function(self)
+        if GetFFD(self).freeMoveJustDragged then return end
+        ToggleFlyoutPanel()
+    end)
+    btn:SetScript("OnEnter", function(self)
+        if not GetFFD(self).freeMoveJustDragged and OldschoolUI.ShowWidgetTooltip then
+            OldschoolUI.ShowWidgetTooltip(self, "Addon Buttons", { anchor = "left" })
+        end
+    end)
+    btn:SetScript("OnLeave", function(self)
+        if OldschoolUI.HideWidgetTooltip then OldschoolUI.HideWidgetTooltip() end
+    end)
+
+    -- Safety: ensure mouse stays enabled. Some Blizzard code or addon hooks
+    -- on minimap children can disable mouse input. Re-assert on every Show.
+    btn:HookScript("OnShow", function(self)
+        if not self:IsMouseEnabled() then
+            self:EnableMouse(true)
+        end
+    end)
+
+    flyoutToggle = btn
+    flyoutOwnedFrames[btn] = true
+    return btn
+end
+
+local coordFrame, coordTicker
+local clockFrame, clockTicker, clockBg
+local locationFrame, locationBg
+
+local function GetMinimapFont()
+    local path = OldschoolUI.GetFontPath and OldschoolUI.GetFontPath("minimap") or STANDARD_TEXT_FONT
+    local flag = OldschoolUI.GetFontOutlineFlag and OldschoolUI.GetFontOutlineFlag("minimap") or "OUTLINE"
+    return path, flag
+end
+
+local function ApplyMinimapFont(fs, size)
+    local path, flag = GetMinimapFont()
+    fs:SetFont(path, size, flag)
+    if OldschoolUI.GetFontUseShadow and OldschoolUI.GetFontUseShadow("minimap") then
+        fs:SetShadowOffset(1, -1)
+        fs:SetShadowColor(0, 0, 0, 0.8)
+    else
+        fs:SetShadowOffset(0, 0)
+    end
+end
+
+-- Cache clock CVars so we don't read them every second
+local cachedUse24h, cachedUseLocal
+local function RefreshClockCVars()
+    cachedUse24h = GetCVar("timeMgrUseMilitaryTime") == "1"
+    cachedUseLocal = GetCVar("timeMgrUseLocalTime") == "1"
+end
+
+-- Resolve the effective 12/24h setting: explicit DB choice overrides the game
+-- CVar; "auto" (default) follows the game's Use Military Time setting.
+local function ClockUse24h()
+    local mp = MM.db and MM.db.profile and MM.db.profile.minimap
+    local cf = (mp and mp.clockFormat) or "auto"
+    if cf == "24h" then return true end
+    if cf == "12h" then return false end
+    if cachedUse24h == nil then RefreshClockCVars() end
+    return cachedUse24h
+end
+
+local function UpdateClock()
+    if not clockFrame then return end
+    if cachedUseLocal == nil then RefreshClockCVars() end
+    local use24h = ClockUse24h()
+    if cachedUseLocal then
+        local fmt = use24h and "%H:%M" or "%I:%M %p"
+        clockFrame:SetText(date(fmt))
+    else
+        local h, m = GetGameTime()
+        if use24h then
+            clockFrame:SetText(format("%02d:%02d", h, m))
+        else
+            local ampm = h >= 12 and "PM" or "AM"
+            h = h % 12
+            if h == 0 then h = 12 end
+            clockFrame:SetText(format("%d:%02d %s", h, m, ampm))
+        end
+    end
+end
+
+-- Cache coord format string so we don't rebuild it every 0.5s
+local cachedCoordPrec, cachedCoordFmt
+local function UpdateCoords()
+    if not coordFrame then return end
+    local mapID = C_Map.GetBestMapForUnit("player")
+    if not mapID then coordFrame:SetText(""); return end
+    local pos = C_Map.GetPlayerMapPosition(mapID, "player")
+    if not pos then coordFrame:SetText(""); return end
+    local x, y = pos:GetXY()
+    local p = MM.db and MM.db.profile.minimap
+    local prec = p and p.coordPrecision or 1
+    if prec ~= cachedCoordPrec then
+        cachedCoordPrec = prec
+        cachedCoordFmt = format("%%.%df, %%.%df", prec, prec)
+    end
+    coordFrame:SetText(format(cachedCoordFmt, x * 100, y * 100))
+end
+
+local lastLocationText
+local function UpdateLocation()
+    if not locationFrame then return end
+    if InCombatLockdown() then return end
+    local sub = GetSubZoneText()
+    local text = (sub and sub ~= "") and sub or (GetZoneText() or "")
+    if text == lastLocationText then return end
+    lastLocationText = text
+    locationFrame:SetText(text)
+    if locationBg then
+        local tw = locationFrame:GetStringWidth() or 0
+        locationBg:SetSize(tw + 20, 18)
+    end
+end
+
+-------------------------------------------------------------------------------
+--  Free Move Button System
+--  When freeMoveBtns is enabled, shift+click any minimap-area button to drag
+--  it. Positions are stored as offsets in DB.profile.minimap.btnPositions
+--  keyed by a stable identifier string.
+-------------------------------------------------------------------------------
+local function GetBtnPosKey(frame)
+    -- Custom indicator buttons store their key directly
+    if frame._indicatorKey then return frame._indicatorKey end
+    local name = frame:GetName()
+    if name then return name end
+    if frame == flyoutToggle then return "_flyoutToggle" end
+    return nil
+end
+
+local function GetBtnOffset(key)
+    local mp = MM.db and MM.db.profile.minimap
+    if not mp or not mp.freeMoveBtns or not mp.btnPositions then return 0, 0 end
+    local pos = mp.btnPositions[key]
+    if not pos then return 0, 0 end
+    return pos.x or 0, pos.y or 0
+end
+
+local function SaveBtnOffset(key, x, y)
+    local mp = MM.db and MM.db.profile.minimap
+    if not mp then return end
+    if not mp.btnPositions then mp.btnPositions = {} end
+    mp.btnPositions[key] = { x = x, y = y }
+end
+
+local _freeMoveHooked = {}  -- [frame] = true, one-time hook guard
+
+local function EnableFreeMove(frame)
+    if not frame or _freeMoveHooked[frame] then return end
+    _freeMoveHooked[frame] = true
+
+    local key = GetBtnPosKey(frame)
+    if not key then return end
+
+    frame:SetMovable(true)
+    frame:SetClampedToScreen(true)
+
+    -- Guard third-party buttons (LibDBIcon, etc.) that have their own OnClick.
+    -- Wrap their handler so the drag flag blocks click-through.
+    if not frame._indicatorKey and frame ~= flyoutToggle then
+        local origClick = frame:GetScript("OnClick")
+        if origClick then
+            frame:SetScript("OnClick", function(self, ...)
+                if GetFFD(self).freeMoveJustDragged then return end
+                origClick(self, ...)
+            end)
+        end
+    end
+
+    local isDragging = false
+    local startX, startY, origOffX, origOffY
+
+    local origPoint, origRel, origRelPoint, origX, origY
+
+    local function FreeMoveOnUpdate(self)
+        if not IsMouseButtonDown("LeftButton") then
+            isDragging = false
+            self:SetScript("OnUpdate", nil)
+            -- Clear the drag flag on the next frame (set in OnMouseDown)
+            C_Timer.After(0, function() GetFFD(self).freeMoveJustDragged = nil end)
+            -- Save final offset and re-layout once on release
+            local es = self:GetEffectiveScale()
+            local cx, cy = GetCursorPosition()
+            cx, cy = cx / es, cy / es
+            local dx, dy = cx - startX, cy - startY
+            SaveBtnOffset(key, origOffX + dx, origOffY + dy)
+            if ApplyMinimap then ApplyMinimap() end
+            return
+        end
+        -- Move the button directly during drag (no full relayout)
+        local es = self:GetEffectiveScale()
+        local cx, cy = GetCursorPosition()
+        cx, cy = cx / es, cy / es
+        local dx, dy = cx - startX, cy - startY
+        if origPoint then
+            self:ClearAllPoints()
+            self:SetPoint(origPoint, origRel, origRelPoint, origX + origOffX + dx, origY + origOffY + dy)
+        end
+    end
+
+    frame:HookScript("OnMouseDown", function(self, button)
+        if button ~= "LeftButton" then return end
+        if not IsShiftKeyDown() then return end
+        local mp = MM.db and MM.db.profile.minimap
+        if not mp or not mp.freeMoveBtns then return end
+        isDragging = true
+        -- Block click actions immediately so OnClick can never fire during a drag,
+        -- regardless of WoW's event ordering. Cleared on the frame after release.
+        GetFFD(self).freeMoveJustDragged = true
+        local es = self:GetEffectiveScale()
+        startX, startY = GetCursorPosition()
+        startX, startY = startX / es, startY / es
+        origOffX, origOffY = GetBtnOffset(key)
+        -- Snapshot the button's current anchor (before any offset)
+        origPoint, origRel, origRelPoint, origX, origY = self:GetPoint(1)
+        -- Subtract current offset to get the base anchor position
+        origX = (origX or 0) - origOffX
+        origY = (origY or 0) - origOffY
+        self:SetScript("OnUpdate", FreeMoveOnUpdate)
+    end)
+
+    frame:HookScript("OnMouseUp", function(self, button)
+        if button ~= "LeftButton" or not isDragging then return end
+        isDragging = false
+        self:SetScript("OnUpdate", nil)
+        local es = self:GetEffectiveScale()
+        local cx, cy = GetCursorPosition()
+        cx, cy = cx / es, cy / es
+        local dx, dy = cx - startX, cy - startY
+        SaveBtnOffset(key, origOffX + dx, origOffY + dy)
+        -- Clear the drag flag on the next frame (set in OnMouseDown)
+        C_Timer.After(0, function() GetFFD(frame).freeMoveJustDragged = nil end)
+        if ApplyMinimap then ApplyMinimap() end
+    end)
+
+end
+
+-- Apply saved offset to a button (called during layout)
+local function ApplyBtnOffset(frame)
+    if not frame then return end
+    local key = GetBtnPosKey(frame)
+    if not key then return end
+    local ox, oy = GetBtnOffset(key)
+    if ox == 0 and oy == 0 then return end
+    local p1, rel, p2, x, y = frame:GetPoint(1)
+    if p1 then
+        frame:SetPoint(p1, rel, p2, (x or 0) + ox, (y or 0) + oy)
+    end
+end
+
+local function SaveZoomLevel()
+    local p = MM.db and MM.db.profile.minimap
+    if not p then return end
+    p.savedZoom = Minimap:GetZoom()
+end
+
+-- Blizzard structural frames that should NOT go into the flyout
+local flyoutBlacklist = {
+    MinimapZoomIn    = true,
+    MinimapZoomOut   = true,
+    MinimapBackdrop  = true,
+    GameTimeFrame    = true,
+}
+
+-- Persistently hide a minimap button via Show hook
+local addonButtonHooks = {}
+
+local function HideMinimapChild(btn)
+    _suppressVisTrack = true
+    btn:Hide()
+    btn:SetAlpha(0)
+    _suppressVisTrack = false
+    if not addonButtonHooks[btn] then
+        -- Track addon-intended visibility via Show/Hide hooks
+        hooksecurefunc(btn, "Show", function(self)
+            if not _suppressVisTrack then
+                -- Don't track addon Show() while flyout is open: the button
+                -- is already visible in our grid, and tracking would let a
+                -- subsequent Hide() mark it as unwanted.
+                if not (flyoutPanel and flyoutPanel:IsShown()) then
+                    _addonVisible[self] = true
+                end
+            end
+            if InCombatLockdown() then return end
+            -- Never zero alpha while the flyout is open -- addon buttons
+            -- are visible in the grid and periodic Show() calls from
+            -- LibDBIcon/addons would make them disappear mid-view.
+            if flyoutPanel and flyoutPanel:IsShown() then return end
+            -- Allow ungrouped buttons to stay visible
+            if IsUngrouped(self) then return end
+            local mp = MM.db and MM.db.profile.minimap
+            if mp and mp.enabled and not flyoutOwnedFrames[self] then
+                self:SetAlpha(0)
+            end
+        end)
+        hooksecurefunc(btn, "Hide", function(self)
+            if not _suppressVisTrack then
+                -- Freeze visibility tracking while the flyout is open.
+                -- LibDBIcon and addons periodically call Hide() during
+                -- internal refreshes; letting that mark _addonVisible=false
+                -- causes buttons to vanish from the open flyout grid.
+                if flyoutPanel and flyoutPanel:IsShown() then
+                    self:Show()
+                    return
+                end
+                _addonVisible[self] = false
+            end
+        end)
+        addonButtonHooks[btn] = true
+    end
+end
+
+local function ShowMinimapChild(btn)
+    _suppressVisTrack = true
+    btn:SetAlpha(1)
+    btn:EnableMouse(true)
+    btn:Show()
+    _suppressVisTrack = false
+end
+
+-- Pin/POI frame patterns to exclude from the flyout (HandyNotes, TomTom, etc.)
+local flyoutPinPatterns = {
+    "^HandyNotes",
+    "^TomTom",
+    "^HereBeDragons",
+    "^Questie",
+    "^GatherMate",
+    "^pin",
+    "^Pin",
+}
+
+local function IsPinFrame(name)
+    if not name then return false end
+    for _, pat in ipairs(flyoutPinPatterns) do
+        if name:match(pat) then return true end
+    end
+    return false
+end
+
+-- Gather all minimap buttons (Blizzard + addon) into cachedAddonButtons
+local function GatherMinimapButtons()
+    wipe(cachedAddonButtons)
+    if not Minimap then return end
+    -- Also scan flyout panel children (buttons we already reparented)
+    local sources = { Minimap }
+    if flyoutPanel then sources[2] = flyoutPanel end
+    for _, source in ipairs(sources) do
+        for _, child in ipairs({ source:GetChildren() }) do
+            if not flyoutOwnedFrames[child] then
+                local name = child:GetName()
+                if flyoutBlacklist[name] then
+                    -- skip
+                elseif IsPinFrame(name) then
+                    -- skip pin/POI frames
+                elseif name and name:match("^LibDBIcon10_") then
+                    -- Any LibDBIcon button, including names ending in a digit
+                    -- (e.g. LibDBIcon10_MobInfo2) which the width/digit gate below
+                    -- would otherwise drop. Collect regardless of object type.
+                    if _addonVisible[child] == nil then
+                        _addonVisible[child] = child:IsShown()
+                    end
+                    cachedAddonButtons[#cachedAddonButtons + 1] = child
+                elseif child:IsObjectType("Button") and name
+                    and not name:match("%d+$") then
+                    local w = child:GetWidth() or 0
+                    -- Width gate only for first discovery; once a button is
+                    -- tracked in _addonVisible it is always re-collected so
+                    -- our own SetSize (e.g. slider < 20) can't permanently
+                    -- drop it from the list.
+                    if w >= 20 or _addonVisible[child] ~= nil then
+                        if _addonVisible[child] == nil then
+                            _addonVisible[child] = child:IsShown()
+                        end
+                        cachedAddonButtons[#cachedAddonButtons + 1] = child
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- Expose for options UI
+
+-- Hide all collected minimap buttons from the map surface
+-- Ungrouped buttons are left alone (positioned by LayoutIndicatorFrames)
+-- Buttons currently displayed inside the open flyout are also skipped --
+-- HideMinimapChild uses _suppressVisTrack which bypasses the force-show
+-- protection in the Hide hook, so calling it on flyout buttons while the
+-- panel is visible would silently zero their alpha with no recovery.
+local function HideAllMinimapButtons()
+    GatherMinimapButtons()
+    local flyoutOpen = flyoutPanel and flyoutPanel:IsShown()
+    for _, btn in ipairs(cachedAddonButtons) do
+        if not IsUngrouped(btn) then
+            if flyoutOpen and btn:GetParent() == flyoutPanel then
+                -- Button is visible in the flyout grid; leave it alone
+            else
+                HideMinimapChild(btn)
+            end
+        end
+    end
+end
+
+local function ShowAllMinimapButtons()
+    for _, btn in ipairs(cachedAddonButtons) do
+        ShowMinimapChild(btn)
+    end
+    wipe(cachedAddonButtons)
+end
+
+-------------------------------------------------------------------------------
+--  Minimap Indicator Buttons (custom replacements for Blizzard's reparented frames)
+--  Each is our own Button with a black bg, icon texture, and simple click handler.
+--  No Blizzard frame reparenting = no taint, no layout fights.
+-------------------------------------------------------------------------------
+local indicatorBg = nil  -- combined bg strip for square mode (legacy, still used when free move is off)
+local _customIndicators = {}  -- { tracking, calendar, mail, queue }
+
+-- LFG queue helpers (used by the queue indicator button + visibility sync).
+local _lfgQueueWatcher = nil
+local function GetLFGCats()
+    return {
+        LE_LFG_CATEGORY_LFD, LE_LFG_CATEGORY_LFR, LE_LFG_CATEGORY_RF,
+        LE_LFG_CATEGORY_SCENARIO, LE_LFG_CATEGORY_FLEXRAID,
+    }
+end
+local function QueueIsActive()
+    if not GetLFGMode then return false end
+    local cats = GetLFGCats()
+    for i = 1, 5 do
+        local cat = cats[i]
+        if cat then
+            local mode = GetLFGMode(cat)
+            if mode and mode ~= "" then return true end
+        end
+    end
+    return false
+end
+
+-- Native atlas aspect ratios (width / height) and per-icon scale multipliers
+local INDICATOR_ATLAS_RATIO = {
+    ["UI-HUD-Minimap-Tracking-Up"]           = 15 / 14,
+    ["UI-HUD-Minimap-Tracking-Mouseover"]    = 15 / 14,
+    ["UI-HUD-Minimap-Tracking-Down"]         = 16 / 15,
+    ["UI-HUD-Minimap-Mail-Up"]               = 19.5 / 15,
+    ["UI-HUD-Minimap-Mail-Mouseover"]        = 19.5 / 15,
+}
+local INDICATOR_ATLAS_SCALE = {}
+-- Calendar atlases: all 31 days share the same ratio/scale
+for day = 1, 31 do
+    local prefix = "UI-HUD-Calendar-" .. day
+    INDICATOR_ATLAS_RATIO[prefix .. "-Up"]        = 21 / 19
+    INDICATOR_ATLAS_RATIO[prefix .. "-Mouseover"] = 21 / 19
+    INDICATOR_ATLAS_RATIO[prefix .. "-Down"]      = 21 / 19
+    INDICATOR_ATLAS_SCALE[prefix .. "-Up"]        = 1.25
+    INDICATOR_ATLAS_SCALE[prefix .. "-Mouseover"] = 1.25
+    INDICATOR_ATLAS_SCALE[prefix .. "-Down"]      = 1.25
+end
+-- Per-icon pixel offset from center { x, y }
+local INDICATOR_ATLAS_OFFSET = {
+    _gameTime = { 2, -2 },
+    _mail     = { 1, -1 },
+}
+
+local function CreateIndicatorBtn(name, parent, upAtlas, overAtlas, downAtlas, onClick)
+    local btn = CreateFrame("Button", nil, parent)
+    btn:SetSize(GetInteractableBtnSize(), GetInteractableBtnSize())
+    btn:SetFrameLevel(parent:GetFrameLevel() + 20)
+    btn:EnableMouse(true)
+
+    -- Black background
+    local bg = CreateFrame("Frame", nil, btn, "BackdropTemplate")
+    bg:SetBackdrop({ bgFile = "Interface\\ChatFrame\\ChatFrameBackground" })
+    bg:SetBackdropColor(0, 0, 0, 0.8)
+    bg:SetAllPoints(btn)
+    bg:SetFrameLevel(btn:GetFrameLevel() - 1)
+    btn._bg = bg
+
+    -- Icon: sized to preserve atlas aspect ratio within the button
+    local icon = btn:CreateTexture(nil, "ARTWORK")
+    local inset = 3
+    local ratio = upAtlas and INDICATOR_ATLAS_RATIO[upAtlas]
+    if ratio then
+        local btnSz = GetInteractableBtnSize()
+        local avail = btnSz - inset * 2
+        local scale = INDICATOR_ATLAS_SCALE[upAtlas] or 1
+        local iconW, iconH
+        if ratio >= 1 then
+            iconW = avail * scale
+            iconH = (avail / ratio) * scale
+        else
+            iconH = avail * scale
+            iconW = (avail * ratio) * scale
+        end
+        icon:SetSize(iconW, iconH)
+        local off = INDICATOR_ATLAS_OFFSET[name]
+        icon:SetPoint("CENTER", btn, "CENTER", off and off[1] or 0, off and off[2] or 0)
+    else
+        icon:SetPoint("TOPLEFT", btn, "TOPLEFT", inset, -inset)
+        icon:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", -inset, inset)
+    end
+    if upAtlas then OldschoolUI.SafeAtlas(icon, upAtlas, btn._fallbackTex) end
+    btn._icon = icon
+    btn._upAtlas = upAtlas
+    btn._overAtlas = overAtlas
+    btn._downAtlas = downAtlas
+    btn._indicatorKey = name
+
+    -- Hover/push states
+    btn:SetScript("OnEnter", function(self)
+        if self._overAtlas and self._icon then OldschoolUI.SafeAtlas(self._icon, self._overAtlas, self._fallbackTex) end
+    end)
+    btn:SetScript("OnLeave", function(self)
+        if self._upAtlas and self._icon then OldschoolUI.SafeAtlas(self._icon, self._upAtlas, self._fallbackTex) end
+    end)
+    btn:SetScript("OnMouseDown", function(self)
+        if self._downAtlas and self._icon then OldschoolUI.SafeAtlas(self._icon, self._downAtlas, self._fallbackTex) end
+    end)
+    btn:SetScript("OnMouseUp", function(self)
+        local over = self:IsMouseOver()
+        local atlas = over and self._overAtlas or self._upAtlas
+        if atlas and self._icon then OldschoolUI.SafeAtlas(self._icon, atlas, self._fallbackTex) end
+    end)
+
+    if onClick then
+        btn:SetScript("OnClick", function(self)
+            if GetFFD(self).freeMoveJustDragged then return end
+            onClick(self)
+        end)
+    end
+
+    return btn
+end
+
+-------------------------------------------------------------------------------
+--  Friends Online indicator
+--  Gathers guild, BNet favorites, and BNet/character friends on hover.
+--  Zero background work -- all data is read live when the tooltip opens.
+-------------------------------------------------------------------------------
+local FRIENDS_ATLAS = "housefinder_neighborhood-friends-icon"
+
+local function GatherOnlineFriends()
+    local guild, favorites, friends = {}, {}, {}
+    local seenBNet = {}
+    local myName = UnitName("player")
+
+    -- Guild members (exclude self)
+    if IsInGuild and IsInGuild() then
+        local total = GetNumGuildMembers() or 0
+        for i = 1, total do
+            local name, _, _, level, _, zone, _, _, online, _, classFile = GetGuildRosterInfo(i)
+            if online and name then
+                local short = name:match("^([^%-]+)") or name
+                if short ~= myName then
+                    guild[#guild + 1] = { name = short, class = classFile, zone = zone or "", level = level }
+                end
+            end
+        end
+    end
+
+    -- BNet friends (favorites first, then others)
+    local numBNet = BNGetNumFriends and BNGetNumFriends() or 0
+    for i = 1, numBNet do
+        local acct = C_BattleNet and C_BattleNet.GetFriendAccountInfo and C_BattleNet.GetFriendAccountInfo(i)
+        if acct then
+            local gameInfo = acct.gameAccountInfo
+            if gameInfo and gameInfo.isOnline and gameInfo.clientProgram == "WoW" then
+                local charName = gameInfo.characterName
+                local classFile = gameInfo.className and gameInfo.className:upper():gsub(" ", "")
+                -- Resolve classFile from class ID if available
+                if gameInfo.classID and C_CreatureInfo and C_CreatureInfo.GetClassInfo then
+                    local ci = C_CreatureInfo.GetClassInfo(gameInfo.classID)
+                    if ci and ci.classFile then classFile = ci.classFile end
+                end
+                local zone = gameInfo.areaName or ""
+                local entry = {
+                    name = charName or acct.accountName or "???",
+                    class = classFile,
+                    zone = zone,
+                    level = gameInfo.characterLevel,
+                    bnetTag = acct.accountName,
+                }
+                if charName then seenBNet[charName] = true end
+                if acct.isFavorite then
+                    favorites[#favorites + 1] = entry
+                else
+                    friends[#friends + 1] = entry
+                end
+            end
+        end
+    end
+
+    -- Character-level friends (skip if already in BNet list)
+    local numChar = C_FriendList and C_FriendList.GetNumFriends and C_FriendList.GetNumFriends() or 0
+    for i = 1, numChar do
+        local info = C_FriendList.GetFriendInfoByIndex(i)
+        if info and info.connected then
+            local charName = info.name
+            if charName and not seenBNet[charName] then
+                friends[#friends + 1] = {
+                    name = charName:match("^([^%-]+)") or charName,
+                    class = info.className and info.className:upper():gsub(" ", ""),
+                    zone = info.area or "",
+                    level = info.level,
+                }
+            end
+        end
+    end
+
+    -- Remove guild members from friends list to avoid duplicates
+    local guildSet = {}
+    for _, g in ipairs(guild) do guildSet[g.name] = true end
+    for i = #friends, 1, -1 do
+        if guildSet[friends[i].name] then table.remove(friends, i) end
+    end
+    for i = #favorites, 1, -1 do
+        if guildSet[favorites[i].name] then table.remove(favorites, i) end
+    end
+
+    return guild, favorites, friends
+end
+
+-- Custom two-column friends tooltip
+local _friendsTT
+local _friendsTTRows = {}
+local _friendsTTHeaders = {}
+local _friendsTTDividers = {}
+local FTT_PAD     = 8
+local FTT_ROW_H   = 14
+local FTT_HDR_H   = 16
+local FTT_GAP     = 2
+local FTT_DIV_PAD = 5   -- padding above and below the divider line
+local FTT_MAX_FAV = 20
+local FTT_MAX_GLD = 20
+local FTT_MAX_FRD = 15
+local function FTT_FONT()
+    return (OldschoolUI.GetFontPath and OldschoolUI.GetFontPath()) or OldschoolUI.EXPRESSWAY or "Fonts\\FRIZQT__.TTF"
+end
+
+local function GetFriendsTT()
+    if _friendsTT then return _friendsTT end
+    local f = CreateFrame("Frame", nil, UIParent)
+    f:SetFrameStrata("TOOLTIP")
+    f:SetFrameLevel(200)
+    f:Hide()
+    local bg = f:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+    bg:SetColorTexture(0.067, 0.067, 0.067, 0.92)
+    OldschoolUI.MakeBorder(f, 1, 1, 1, 0.15, OldschoolUI.PanelPP)
+    _friendsTT = f
+    return f
+end
+
+local function EnsureFTTRow(idx)
+    if _friendsTTRows[idx] then return _friendsTTRows[idx] end
+    local tt = GetFriendsTT()
+    local nameFS = tt:CreateFontString(nil, "OVERLAY")
+    nameFS:SetFont(FTT_FONT(), 10, "")
+    nameFS:SetJustifyH("LEFT")
+    local zoneFS = tt:CreateFontString(nil, "OVERLAY")
+    zoneFS:SetFont(FTT_FONT(), 10, "")
+    zoneFS:SetJustifyH("RIGHT")
+    _friendsTTRows[idx] = { name = nameFS, zone = zoneFS }
+    return _friendsTTRows[idx]
+end
+
+local function EnsureFTTHeader(idx)
+    if _friendsTTHeaders[idx] then return _friendsTTHeaders[idx] end
+    local tt = GetFriendsTT()
+    local fs = tt:CreateFontString(nil, "OVERLAY")
+    fs:SetFont(FTT_FONT(), 12, "")
+    fs:SetJustifyH("CENTER")
+    fs:SetTextColor(1, 1, 1, 0.9)
+    _friendsTTHeaders[idx] = fs
+    return fs
+end
+
+local function EnsureFTTDivider(idx)
+    if _friendsTTDividers[idx] then return _friendsTTDividers[idx] end
+    local tt = GetFriendsTT()
+    local tex = tt:CreateTexture(nil, "ARTWORK")
+    tex:SetColorTexture(1, 1, 1, 0.12)
+    local PP = OldschoolUI.PP
+    if PP and PP.Snap then
+        tex:SetHeight(PP.Snap(1))
+    else
+        tex:SetHeight(1)
+    end
+    _friendsTTDividers[idx] = tex
+    return tex
+end
+
+local function ShowFriendsTooltip(anchor)
+    local guild, favorites, friends = GatherOnlineFriends()
+    local tt = GetFriendsTT()
+    local total = #guild + #favorites + #friends
+
+    -- Refresh fonts to match current global font setting
+    local font = FTT_FONT()
+    for i = 1, #_friendsTTRows do
+        _friendsTTRows[i].name:SetFont(font, 10, "")
+        _friendsTTRows[i].zone:SetFont(font, 10, "")
+    end
+    for i = 1, #_friendsTTHeaders do
+        _friendsTTHeaders[i]:SetFont(font, 12, "")
+    end
+
+    -- Hide all pooled elements
+    for i = 1, #_friendsTTRows do
+        _friendsTTRows[i].name:Hide()
+        _friendsTTRows[i].zone:Hide()
+    end
+    for i = 1, #_friendsTTHeaders do _friendsTTHeaders[i]:Hide() end
+    for i = 1, #_friendsTTDividers do _friendsTTDividers[i]:Hide() end
+
+    if total == 0 then
+        local row = EnsureFTTRow(1)
+        row.name:SetFont(font, 10, "")
+        row.name:SetText(OldschoolUI.L("|cff888888No friends online|r"))
+        row.zone:SetText("")
+        tt:SetSize(FTT_PAD * 2 + 140, FTT_PAD + FTT_ROW_H + FTT_PAD)
+        row.name:ClearAllPoints()
+        row.name:SetPoint("TOPLEFT", tt, "TOPLEFT", FTT_PAD, -FTT_PAD)
+        row.name:Show()
+        tt:ClearAllPoints()
+        tt:SetPoint("TOPRIGHT", anchor, "TOPLEFT", -4, 0)
+        tt:Show()
+        return total
+    end
+
+    local sections = {}
+    if #favorites > 0 then sections[#sections + 1] = { title = "Favorites", list = favorites, max = FTT_MAX_FAV } end
+    if #guild > 0 then sections[#sections + 1] = { title = "Guild", list = guild, max = FTT_MAX_GLD } end
+    if #friends > 0 then sections[#sections + 1] = { title = "Friends", list = friends, max = FTT_MAX_FRD } end
+
+    local rowIdx = 0
+    local hdrIdx = 0
+    local divIdx = 0
+    local maxNameW, maxZoneW = 0, 0
+    local curY = -FTT_PAD
+
+    for si, sec in ipairs(sections) do
+        -- Divider line between sections (not before the first)
+        if si > 1 then
+            curY = curY - FTT_DIV_PAD
+            divIdx = divIdx + 1
+            local div = EnsureFTTDivider(divIdx)
+            div:ClearAllPoints()
+            div:SetPoint("TOPLEFT", tt, "TOPLEFT", FTT_PAD, curY)
+            div:SetPoint("TOPRIGHT", tt, "TOPRIGHT", -FTT_PAD, curY)
+            div:Show()
+            curY = curY - div:GetHeight() - FTT_DIV_PAD
+        end
+
+        -- Section header (centered, white title, accent count, 12px)
+        curY = curY - 5  -- spacing above header
+        hdrIdx = hdrIdx + 1
+        local hdr = EnsureFTTHeader(hdrIdx)
+        hdr:SetFont(font, 12, "")
+        local ac = OldschoolUI.ACCENT or OldschoolUI.ACCENT
+        local acHex = ac and format("%02x%02x%02x", (ac.r or 0.05) * 255, (ac.g or 0.82) * 255, (ac.b or 0.62) * 255) or "D9A441"
+        hdr:SetText(sec.title .. " (|cff" .. acHex .. #sec.list .. "|r)")
+        hdr:ClearAllPoints()
+        hdr:SetPoint("TOP", tt, "TOP", 0, curY)
+        hdr:Show()
+        curY = curY - FTT_HDR_H - 5  -- spacing below header
+
+        local shown = math.min(#sec.list, sec.max)
+        for i = 1, shown do
+            local e = sec.list[i]
+            rowIdx = rowIdx + 1
+            local row = EnsureFTTRow(rowIdx)
+            row.name:SetFont(font, 10, "")
+            row.zone:SetFont(font, 10, "")
+
+            local cc = e.class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[e.class]
+            local colored = cc and cc:WrapTextInColorCode(e.name) or e.name
+            row.name:SetText(colored)
+            row.name:SetTextColor(1, 1, 1, 0.85)
+
+            local zone = e.zone or ""
+            if zone ~= "" then
+                row.zone:SetText("|cff888888" .. zone .. "|r")
+            else
+                row.zone:SetText("")
+            end
+
+            row.name:ClearAllPoints()
+            row.name:SetPoint("TOPLEFT", tt, "TOPLEFT", FTT_PAD, curY)
+            row.zone:ClearAllPoints()
+            row.zone:SetPoint("TOPRIGHT", tt, "TOPRIGHT", -FTT_PAD, curY)
+            row.name:Show()
+            row.zone:Show()
+
+            local nw = row.name:GetStringWidth() or 0
+            local zw = row.zone:GetStringWidth() or 0
+            if nw > maxNameW then maxNameW = nw end
+            if zw > maxZoneW then maxZoneW = zw end
+
+            curY = curY - (FTT_ROW_H + FTT_GAP)
+        end
+
+        if #sec.list > sec.max then
+            rowIdx = rowIdx + 1
+            local row = EnsureFTTRow(rowIdx)
+            row.name:SetFont(font, 10, "")
+            row.name:SetText("|cff888888...and " .. (#sec.list - sec.max) .. " more|r")
+            row.zone:SetText("")
+            row.name:ClearAllPoints()
+            row.name:SetPoint("TOPLEFT", tt, "TOPLEFT", FTT_PAD, curY)
+            row.name:Show()
+            curY = curY - (FTT_ROW_H + FTT_GAP)
+        end
+    end
+
+    local contentW = FTT_PAD + maxNameW + 16 + maxZoneW + FTT_PAD
+    local ttW = math.max(contentW, 160)
+    local ttH = -curY + FTT_PAD
+
+    tt:SetSize(ttW, ttH)
+    tt:ClearAllPoints()
+    tt:SetPoint("TOPRIGHT", anchor, "TOPLEFT", -4, 0)
+    tt:Show()
+    -- Clamp to screen: if the bottom edge goes off-screen, shift up
+    local bottom = tt:GetBottom()
+    if bottom and bottom < 0 then
+        local top = tt:GetTop()
+        if top then
+            tt:ClearAllPoints()
+            tt:SetPoint("TOPRIGHT", anchor, "TOPLEFT", -4, -bottom)
+        end
+    end
+    return total
+end
+
+local function HideFriendsTooltip()
+    if _friendsTT then _friendsTT:Hide() end
+end
+
+local function BuildCustomIndicators(minimap)
+    if _customIndicators.tracking then return end
+
+    -- Tracking
+    _customIndicators.tracking = CreateIndicatorBtn("_tracking", minimap,
+        "UI-HUD-Minimap-Tracking-Up", "UI-HUD-Minimap-Tracking-Mouseover", "UI-HUD-Minimap-Tracking-Down",
+        function(self)
+            local blizBtn = MinimapCluster and MinimapCluster.Tracking and MinimapCluster.Tracking.Button
+            if not blizBtn or not blizBtn.OpenMenu then return end
+
+            -- Toggle: close if already open
+            if blizBtn.menu and blizBtn.menu:IsShown() then
+                blizBtn.menu:Hide()
+                return
+            end
+
+            -- Position hidden Blizzard button at our custom button
+            blizBtn:ClearAllPoints()
+            blizBtn:SetPoint("CENTER", self, "CENTER", 0, 0)
+            blizBtn:SetAlpha(0)
+            blizBtn:EnableMouse(false)
+            blizBtn:OpenMenu()
+
+            -- Reposition menu so its top aligns with our button's top
+            if blizBtn.menu then
+                blizBtn.menu:ClearAllPoints()
+                blizBtn.menu:SetPoint("TOPRIGHT", self, "TOPLEFT", -4, 0)
+            end
+        end)
+    local trackBaseEnter = _customIndicators.tracking:GetScript("OnEnter")
+    local trackBaseLeave = _customIndicators.tracking:GetScript("OnLeave")
+    _customIndicators.tracking:SetScript("OnEnter", function(self)
+        if trackBaseEnter then trackBaseEnter(self) end
+        if not GetFFD(self).freeMoveJustDragged and OldschoolUI.ShowWidgetTooltip then
+            OldschoolUI.ShowWidgetTooltip(self, "Tracking", { anchor = "left" })
+        end
+    end)
+    _customIndicators.tracking:SetScript("OnLeave", function(self)
+        if trackBaseLeave then trackBaseLeave(self) end
+        if OldschoolUI.HideWidgetTooltip then OldschoolUI.HideWidgetTooltip() end
+    end)
+
+    -- Calendar (day-of-month atlas)
+    local calDay = tonumber(date("%d")) or 1
+    local calPrefix = "UI-HUD-Calendar-" .. calDay
+    _customIndicators.calendar = CreateIndicatorBtn("_gameTime", minimap,
+        calPrefix .. "-Up", calPrefix .. "-Mouseover", calPrefix .. "-Down",
+        function()
+            if ToggleCalendar then ToggleCalendar() end
+        end)
+    _customIndicators.calendar._calDay = calDay
+    -- Expose the visible custom calendar so other modules (e.g. LootRoll) can
+    -- anchor to it instead of the hidden Blizzard GameTimeFrame.
+    OldschoolUI._minimapCalendarBtn = _customIndicators.calendar
+    local calBaseEnter = _customIndicators.calendar:GetScript("OnEnter")
+    local calBaseLeave = _customIndicators.calendar:GetScript("OnLeave")
+    _customIndicators.calendar:SetScript("OnEnter", function(self)
+        if calBaseEnter then calBaseEnter(self) end
+        if not GetFFD(self).freeMoveJustDragged and OldschoolUI.ShowWidgetTooltip then
+            OldschoolUI.ShowWidgetTooltip(self, "Calendar", { anchor = "left" })
+        end
+    end)
+    _customIndicators.calendar:SetScript("OnLeave", function(self)
+        if calBaseLeave then calBaseLeave(self) end
+        if OldschoolUI.HideWidgetTooltip then OldschoolUI.HideWidgetTooltip() end
+    end)
+
+    -- Mail (informational, tooltip on hover, with hover atlas)
+    _customIndicators.mail = CreateIndicatorBtn("_mail", minimap,
+        "UI-HUD-Minimap-Mail-Up", "UI-HUD-Minimap-Mail-Mouseover", nil, nil)
+    local mailBaseEnter = _customIndicators.mail:GetScript("OnEnter")
+    local mailBaseLeave = _customIndicators.mail:GetScript("OnLeave")
+    _customIndicators.mail:SetScript("OnEnter", function(self)
+        if mailBaseEnter then mailBaseEnter(self) end
+        if not GetFFD(self).freeMoveJustDragged and OldschoolUI.ShowWidgetTooltip then
+            OldschoolUI.ShowWidgetTooltip(self, HAVE_MAIL or "New Mail", { anchor = "left" })
+        end
+    end)
+    _customIndicators.mail:SetScript("OnLeave", function(self)
+        if mailBaseLeave then mailBaseLeave(self) end
+        if OldschoolUI.HideWidgetTooltip then OldschoolUI.HideWidgetTooltip() end
+    end)
+
+    -- Friends Online button
+    _customIndicators.friends = CreateIndicatorBtn("_friends", minimap,
+        FRIENDS_ATLAS, FRIENDS_ATLAS, nil,
+        function()
+            if InCombatLockdown() then
+                UIErrorsFrame:AddMessage(ERR_NOT_IN_COMBAT, 1.0, 0.3, 0.3, 1.0)
+                return
+            end
+            ToggleFriendsFrame()
+        end)
+    -- Atlas is not in INDICATOR_ATLAS_RATIO so icon uses inset anchoring
+    -- (TOPLEFT/BOTTOMRIGHT). Desaturate slightly for idle state.
+    if _customIndicators.friends._icon then
+        _customIndicators.friends._icon:SetDesaturated(true)
+        OldschoolUI.RegAccent({ type = "vertex", obj = _customIndicators.friends._icon })
+        -- Apply current accent immediately (initial accent pass already ran)
+        local g = OldschoolUI.ACCENT
+        if g then
+            _customIndicators.friends._icon:SetVertexColor(g.r, g.g, g.b, 1)
+        end
+        _customIndicators.friends._icon:SetAlpha(0.85)
+    end
+    local friendsBtnEnter = _customIndicators.friends:GetScript("OnEnter")
+    local friendsBtnLeave = _customIndicators.friends:GetScript("OnLeave")
+    _customIndicators.friends:SetScript("OnEnter", function(self)
+        if friendsBtnEnter then friendsBtnEnter(self) end
+        if self._icon then self._icon:SetAlpha(1) end
+        if GetFFD(self).freeMoveJustDragged then return end
+        ShowFriendsTooltip(self)
+    end)
+    _customIndicators.friends:SetScript("OnLeave", function(self)
+        if friendsBtnLeave then friendsBtnLeave(self) end
+        if self._icon then self._icon:SetAlpha(0.85) end
+        HideFriendsTooltip()
+    end)
+
+    -- LFG queue indicator: shown only while queued. Mouseover = estimated wait
+    -- times, left-click = open the dungeon browser, right-click = leave the queue.
+    do
+        local function FmtWait(sec)
+            if not sec or sec < 0 then return nil end
+            if SecondsToTime then return SecondsToTime(sec, false, false, 1) end
+            return math.floor(sec / 60) .. "m"
+        end
+        local qBtn = CreateIndicatorBtn("_queue", minimap, nil, nil, nil, nil)
+        qBtn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+        if qBtn._icon then
+            qBtn._icon:ClearAllPoints()
+            qBtn._icon:SetPoint("TOPLEFT", qBtn, "TOPLEFT", 3, -3)
+            qBtn._icon:SetPoint("BOTTOMRIGHT", qBtn, "BOTTOMRIGHT", -3, 3)
+            qBtn._icon:SetTexture("Interface\\Icons\\INV_Misc_GroupLooking")
+        end
+        qBtn._fallbackTex = "Interface\\Icons\\INV_Misc_GroupLooking"
+
+        qBtn:SetScript("OnEnter", function(self)
+            if GetFFD(self).freeMoveJustDragged then return end
+            GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+            GameTooltip:SetText(OldschoolUI.L("Group Queue"))
+            local any = false
+            if GetLFGMode and GetLFGQueueStats then
+                local cats = GetLFGCats()
+                for i = 1, 5 do
+                    local cat = cats[i]
+                    if cat and GetLFGMode(cat) then
+                        local s = { GetLFGQueueStats(cat) }
+                        local instanceName, averageWait, myWait = s[11], s[12], s[16]
+                        local name = instanceName
+                        if not name or name == "" then
+                            name = (LFG_CATEGORY_NAMES and LFG_CATEGORY_NAMES[cat]) or tostring(cat)
+                        end
+                        local secret = issecretvalue and (issecretvalue(averageWait) or issecretvalue(myWait))
+                        local w = (myWait and myWait > 0) and myWait or averageWait
+                        local txt = (not secret and FmtWait(w)) or (TIME_UNKNOWN or "...")
+                        GameTooltip:AddDoubleLine(name, txt, 1, 1, 1, 0.6, 0.8, 1)
+                        any = true
+                    end
+                end
+            end
+            if not any then
+                GameTooltip:AddLine(OldschoolUI.L("Not in a queue."), 0.8, 0.8, 0.8)
+            end
+            GameTooltip:AddLine(" ")
+            GameTooltip:AddLine(OldschoolUI.L("Left-click: open finder. Right-click: queue options."), 0.5, 0.8, 1, true)
+            GameTooltip:Show()
+        end)
+        qBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+        qBtn:SetScript("OnClick", function(self, button)
+            if GetFFD(self).freeMoveJustDragged then return end
+            if button == "RightButton" then
+                -- Build our own OldschoolUI-styled context menu from the LFG API
+                -- (MoP Classic's modern queue eye doesn't expose a clickable
+                -- right-click dropdown reliably). Options are state-aware:
+                --   * while queued  -> Leave Queue
+                --   * in LFG group  -> Teleport in/out + Leave Group
+                local items = {}
+                if LeaveLFG and GetLFGMode then
+                    local cats = GetLFGCats()
+                    for i = 1, 5 do
+                        local cat = cats[i]
+                        local mode = cat and GetLFGMode(cat)
+                        if mode == "queued" or mode == "rolecheck" or mode == "suspended" then
+                            items[#items + 1] = {
+                                text = "Leave Queue",
+                                onClick = function() LeaveLFG(cat) end,
+                            }
+                            break  -- one Leave Queue entry is enough
+                        end
+                    end
+                end
+                local inLFGGroup  = (IsPartyLFG and IsPartyLFG()) and true or false
+                local insideDgn   = (IsInLFGDungeon and IsInLFGDungeon()) and true or false
+                if inLFGGroup or insideDgn then
+                    if LFGTeleport then
+                        items[#items + 1] = {
+                            text = insideDgn and "Teleport out of Dungeon" or "Teleport to Dungeon",
+                            onClick = function() LFGTeleport(insideDgn) end,
+                        }
+                    end
+                    items[#items + 1] = {
+                        text = "Leave Group",
+                        onClick = function()
+                            if C_PartyInfo and C_PartyInfo.LeaveParty then C_PartyInfo.LeaveParty()
+                            elseif LeaveParty then LeaveParty() end
+                        end,
+                    }
+                end
+                if #items == 0 then
+                    items[#items + 1] = { text = "Not in a queue.", isDisabled = function() return true end }
+                end
+                if OldschoolUI.ShowContextMenu then
+                    OldschoolUI.ShowContextMenu(self, items)
+                end
+            else
+                if PVEFrame_ToggleFrame then PVEFrame_ToggleFrame()
+                elseif ToggleLFDParentFrame then ToggleLFDParentFrame() end
+            end
+        end)
+
+        _customIndicators.queue = qBtn
+        -- Expose so other modules (e.g. LootRoll) can anchor below it when shown.
+        OldschoolUI._minimapQueueBtn = qBtn
+        qBtn:Hide()
+    end
+
+    -- MoP: several indicator atlases are retail-only (calendar day glyphs,
+    -- neighborhood-friends icon, HUD tracking/mail) and are absent here. Route
+    -- them to Classic icon fallbacks so the buttons always show an icon.
+    do
+        local CI = _customIndicators
+        local FB = {
+            tracking = "Interface\\Minimap\\Tracking\\None",
+            calendar = "Interface\\AddOns\\OldschoolUI\\media\\icons\\calendar-ig.png",
+            mail     = "Interface\\Icons\\INV_Letter_15",
+            friends  = "Interface\\Icons\\Achievement_GuildPerk_EverybodysFriend",
+        }
+        for key, tex in pairs(FB) do
+            local b = CI[key]
+            if b and b._icon then
+                b._fallbackTex = tex
+                OldschoolUI.SafeAtlas(b._icon, b._upAtlas, tex)
+            end
+        end
+    end
+
+end
+
+-- Hide the Blizzard originals so they never render or intercept clicks
+local function HideBlizzardIndicators()
+    local tracking = MinimapCluster and MinimapCluster.Tracking
+    if tracking then tracking:SetAlpha(0); tracking:EnableMouse(false) end
+    local gameTime = _G.GameTimeFrame
+    if gameTime then gameTime:SetAlpha(0); gameTime:EnableMouse(false) end
+    local indicator = MinimapCluster and MinimapCluster.IndicatorFrame
+    if indicator then
+        if indicator.MailFrame then indicator.MailFrame:SetAlpha(0); indicator.MailFrame:EnableMouse(false) end
+    end
+    -- MoP mail lives on the global MiniMapMailFrame (not the retail indicator
+    -- path above). We provide our own mail indicator, so hide Blizzard's and
+    -- keep it hidden when it re-shows on new mail.
+    local mopMail = _G.MiniMapMailFrame
+    if mopMail then
+        mopMail:SetAlpha(0); mopMail:EnableMouse(false)
+        if not mopMail._ouiMailHidden then
+            mopMail._ouiMailHidden = true
+            hooksecurefunc(mopMail, "Show", function(self) self:SetAlpha(0); self:EnableMouse(false) end)
+        end
+    end
+end
+
+-- Sync visibility of custom mail indicator with Blizzard state
+local function SyncIndicatorVisibility()
+    local indicator = MinimapCluster and MinimapCluster.IndicatorFrame
+    if _customIndicators.mail then
+        local hasMail = false
+        if HasNewMail then
+            local raw = HasNewMail()
+            if not issecretvalue or not issecretvalue(raw) then
+                hasMail = raw or false
+            end
+        end
+        _customIndicators.mail:SetShown(hasMail)
+    end
+    if _customIndicators.queue then
+        _customIndicators.queue:SetShown(QueueIsActive())
+    end
+end
+
+-------------------------------------------------------------------------------
+--  Mouseover Extra Buttons
+--  When enabled, the extra buttons (Friends Online, Group Button) only show
+--  while the mouse is over the minimap or one of the
+--  buttons. Either flyout being open keeps the stack shown until it closes.
+--  Event-driven: minimap + button OnEnter/OnLeave drive it, with a small
+--  deferred hide so crossing the tiny gaps between frames doesn't flicker.
+-------------------------------------------------------------------------------
+local _moActive  = false   -- mouseover mode currently engaged
+local _moButtons = {}      -- extra buttons under control this layout
+local _moHooked  = {}      -- frames whose OnEnter/OnLeave we've already hooked
+local _moHideTimer = nil
+
+local function MO_OverAny()
+    if Minimap and Minimap:IsMouseOver() then return true end
+    if flyoutPanel and flyoutPanel:IsShown() then return true end
+    for i = 1, #_moButtons do
+        local b = _moButtons[i]
+        if b:IsShown() and b:IsMouseOver() then return true end
+    end
+    return false
+end
+
+local function MO_Apply(show)
+    local a = show and 1 or 0
+    for i = 1, #_moButtons do _moButtons[i]:SetAlpha(a) end
+end
+
+local function MO_CancelHide()
+    if _moHideTimer then _moHideTimer:Cancel(); _moHideTimer = nil end
+end
+
+-- Assign the forward-declared upvalue so the flyout OnShow/OnHide hooks above
+-- (defined earlier in the file) can drive a re-evaluate.
+MO_Evaluate = function()
+    if not _moActive then return end
+    MO_CancelHide()
+    if MO_OverAny() then
+        MO_Apply(true)
+    else
+        -- Brief delay bridges the gap between adjacent frames (minimap -> button,
+        -- button -> button) so crossing it doesn't flash the stack off and on.
+        _moHideTimer = C_Timer.NewTimer(0.12, function()
+            _moHideTimer = nil
+            if _moActive and not MO_OverAny() then MO_Apply(false) end
+        end)
+    end
+end
+
+local function MO_HookFrame(frame)
+    if not frame or _moHooked[frame] then return end
+    _moHooked[frame] = true
+    frame:HookScript("OnEnter", function()
+        if _moActive then MO_CancelHide(); MO_Apply(true) end
+    end)
+    frame:HookScript("OnLeave", function()
+        if _moActive then MO_Evaluate() end
+    end)
+end
+
+-- Rebuild the managed-button list from the current profile + hide state, hook
+-- the minimap/buttons (once), and set the initial alpha. Called at the end of
+-- every indicator layout so the list reflects current visibility.
+local function MO_Refresh(p)
+    wipe(_moButtons)
+    local heb = (p and p.hideExtraBtns) or {}
+    if p and p.mouseoverExtraBtns then
+        if _customIndicators.friends and not heb.friendsOnline then _moButtons[#_moButtons + 1] = _customIndicators.friends end
+        if flyoutToggle and not heb.groupButton then _moButtons[#_moButtons + 1] = flyoutToggle end
+        -- Ungrouped addon buttons count as extra buttons for this setting too.
+        for _, btn in ipairs(cachedAddonButtons) do
+            if _addonVisible[btn] ~= false and IsUngrouped(btn) then
+                _moButtons[#_moButtons + 1] = btn
+            end
+        end
+    end
+    _moActive = (#_moButtons > 0)
+    if _moActive then
+        MO_HookFrame(Minimap)
+        for i = 1, #_moButtons do MO_HookFrame(_moButtons[i]) end
+        MO_Evaluate()
+    else
+        MO_CancelHide()
+        -- Restore full alpha (harmless on buttons hidden by hideExtraBtns).
+        if _customIndicators.friends then _customIndicators.friends:SetAlpha(1) end
+        if flyoutToggle then flyoutToggle:SetAlpha(1) end
+        -- Restore ungrouped addon buttons we may have dimmed.
+        for _, btn in ipairs(cachedAddonButtons) do
+            if IsUngrouped(btn) then btn:SetAlpha(1) end
+        end
+    end
+end
+
+-- External minimap-stack listeners: other modules (e.g. LootRoll) register a
+-- callback that re-anchors their own button whenever our indicator stack
+-- changes (mail/queue appearing or disappearing), so they never overlap it.
+OldschoolUI._minimapStackListeners = OldschoolUI._minimapStackListeners or {}
+function OldschoolUI.RegisterMinimapStackListener(fn)
+    if not fn then return end
+    OldschoolUI._minimapStackListeners[#OldschoolUI._minimapStackListeners + 1] = fn
+    pcall(fn)
+end
+function OldschoolUI.NotifyMinimapStack()
+    for _, fn in ipairs(OldschoolUI._minimapStackListeners) do pcall(fn) end
+end
+
+local function LayoutIndicatorFrames(minimap, p, circleMode)
+    local flvl = minimap:GetFrameLevel() + 10
+
+    -- Build our custom buttons once, hide Blizzard originals
+    BuildCustomIndicators(minimap)
+    HideBlizzardIndicators()
+    SyncIndicatorVisibility()
+
+    local ci = _customIndicators
+    local sz = GetInteractableBtnSize()
+    local showBg = p.btnBackgrounds ~= false
+    -- Resize buttons and update icon aspect ratios
+    local inset = 3
+    local avail = sz - inset * 2
+    local function ResizeIndicator(btn)
+        if not btn then return end
+        btn:SetSize(sz, sz)
+        if btn._bg then btn._bg:SetShown(showBg) end
+        local ratio = btn._upAtlas and INDICATOR_ATLAS_RATIO[btn._upAtlas]
+        if ratio and btn._icon then
+            local scale = INDICATOR_ATLAS_SCALE[btn._upAtlas] or 1
+            local iconW, iconH
+            if ratio >= 1 then iconW = avail * scale; iconH = (avail / ratio) * scale
+            else iconH = avail * scale; iconW = (avail * ratio) * scale end
+            btn._icon:ClearAllPoints()
+            btn._icon:SetSize(iconW, iconH)
+            local off = btn._indicatorKey and INDICATOR_ATLAS_OFFSET[btn._indicatorKey]
+            btn._icon:SetPoint("CENTER", btn, "CENTER", off and off[1] or 0, off and off[2] or 0)
+        end
+    end
+    ResizeIndicator(ci.tracking)
+    -- Update calendar day if it changed (midnight rollover)
+    if ci.calendar then
+        local today = tonumber(date("%d")) or 1
+        if ci.calendar._calDay ~= today then
+            ci.calendar._calDay = today
+            local prefix = "UI-HUD-Calendar-" .. today
+            ci.calendar._upAtlas = prefix .. "-Up"
+            ci.calendar._overAtlas = prefix .. "-Mouseover"
+            ci.calendar._downAtlas = prefix .. "-Down"
+            if ci.calendar._icon then ci.calendar._icon:SetAtlas(ci.calendar._upAtlas) end
+        end
+    end
+    ResizeIndicator(ci.calendar)
+    ResizeIndicator(ci.mail)
+    ResizeIndicator(ci.queue)
+    if flyoutToggle then
+        flyoutToggle:SetSize(sz, sz)
+        if flyoutToggle._bg then flyoutToggle._bg:SetShown(showBg) end
+        -- Reset to base anchor so free-move offsets don't accumulate across relayouts
+        flyoutToggle:ClearAllPoints()
+        flyoutToggle:SetPoint("BOTTOMRIGHT", minimap, "BOTTOMLEFT", 0, 0)
+    end
+
+    -- Calendar visibility
+    if ci.calendar then ci.calendar:SetShown(not p.hideGameTime) end
+
+    -- Difficulty flag (instance type/size indicator)
+    local diffFrame = (MinimapCluster and MinimapCluster.InstanceDifficulty) or _G.MiniMapInstanceDifficulty
+    if diffFrame then
+        diffFrame:SetParent(minimap)
+        diffFrame:SetFrameLevel(flvl + 2)
+        diffFrame:ClearAllPoints()
+        diffFrame:SetPoint("TOPRIGHT", minimap, "TOPRIGHT", 2, 1)
+        if p.hideRaidDifficulty then
+            diffFrame:SetAlpha(0)
+        else
+            diffFrame:SetAlpha(1)
+        end
+    end
+    if not minimap.Layout then minimap.Layout = function() end end
+
+    if circleMode then
+        -- Circle layout: horizontal row around the clock
+        if ci.tracking and not p.hideTrackingButton then
+            ci.tracking:ClearAllPoints()
+            if clockBg and p.showClock then
+                ci.tracking:SetPoint("RIGHT", clockBg, "LEFT", 0, 0)
+            else
+                ci.tracking:SetPoint("TOP", minimap, "TOP", -20, -3)
+            end
+            ci.tracking:Show()
+        elseif ci.tracking then
+            ci.tracking:Hide()
+        end
+
+        if ci.calendar and not p.hideGameTime then
+            ci.calendar:ClearAllPoints()
+            if clockBg and p.showClock then
+                ci.calendar:SetPoint("LEFT", clockBg, "RIGHT", 0, 0)
+            else
+                ci.calendar:SetPoint("TOP", minimap, "TOP", 20, -3)
+            end
+        end
+
+        if ci.mail and ci.mail:IsShown() then
+            ci.mail:ClearAllPoints()
+            ci.mail:SetPoint("RIGHT", ci.tracking, "LEFT", 0, 0)
+        end
+
+        if ci.queue and ci.queue:IsShown() then
+            ci.queue:ClearAllPoints()
+
+            ci.queue:SetPoint("RIGHT", anchor, "LEFT", 0, 0)
+        end
+
+        OldschoolUI._minimapStack = { frame = minimap, circle = true }
+        if indicatorBg then indicatorBg:Hide() end
+
+    else
+        -- Square layout: vertical stack on the left side
+        local y = 0
+
+        if ci.tracking and not p.hideTrackingButton then
+            ci.tracking:ClearAllPoints()
+            ci.tracking:SetPoint("TOPRIGHT", minimap, "TOPLEFT", 0, y)
+            ci.tracking:Show()
+            y = y - sz
+        elseif ci.tracking then
+            ci.tracking:Hide()
+        end
+
+        if ci.calendar and not p.hideGameTime then
+            ci.calendar:ClearAllPoints()
+            ci.calendar:SetPoint("TOPRIGHT", minimap, "TOPLEFT", 0, y)
+            y = y - sz
+        end
+
+        if ci.mail and ci.mail:IsShown() then
+            ci.mail:ClearAllPoints()
+            ci.mail:SetPoint("TOPRIGHT", minimap, "TOPLEFT", 0, y)
+            y = y - sz
+        end
+
+        if ci.queue and ci.queue:IsShown() then
+            ci.queue:ClearAllPoints()
+            ci.queue:SetPoint("TOPRIGHT", minimap, "TOPLEFT", 0, y)
+            y = y - sz
+        end
+
+        OldschoolUI._minimapStack = { frame = minimap, y = y, sz = sz, square = true }
+        if indicatorBg then indicatorBg:Hide() end
+    end
+
+    OldschoolUI.NotifyMinimapStack()
+
+    -- Position ungrouped buttons above the flyout toggle (or at its position if hidden)
+    if flyoutToggle then
+        local btnSize = GetInteractableBtnSize()
+        local ungroupBtnSize = btnSize
+        local flyoutVisible = flyoutToggle:IsShown()
+        local anchor = flyoutVisible and flyoutToggle or nil
+        local mp = MM.db and MM.db.profile.minimap
+        local ungrouped = {}
+        for _, btn in ipairs(cachedAddonButtons) do
+            if _addonVisible[btn] ~= false and IsUngrouped(btn) then
+                local name = btn:GetName()
+                local order = mp and mp.ungroupedButtons and mp.ungroupedButtons[name] or 999
+                if type(order) == "boolean" then order = 999 end
+                ungrouped[#ungrouped + 1] = { btn = btn, order = order }
+            end
+        end
+        table.sort(ungrouped, function(a, b) return a.order < b.order end)
+        local freeMove = p.freeMoveBtns
+        -- Calculate base Y for free-move independent anchoring
+        local fmBaseY = 0
+        if freeMove and flyoutVisible then
+            fmBaseY = ungroupBtnSize  -- start above flyout toggle
+        end
+        for idx, entry in ipairs(ungrouped) do
+            local btn = entry.btn
+            -- Restore from flyout if needed
+            if flyoutSavedParents[btn] then
+                if GetFFD(btn).flyoutRing then GetFFD(btn).flyoutRing:Hide() end
+                if btn.SetFixedFrameStrata then btn:SetFixedFrameStrata(false) end
+                if btn.SetFixedFrameLevel then btn:SetFixedFrameLevel(false) end
+                flyoutSavedParents[btn] = nil
+            end
+            btn:SetParent(minimap)
+            btn:SetFrameLevel(minimap:GetFrameLevel() + 11)
+            btn:ClearAllPoints()
+            if showBg then
+                -- Strip BEFORE resize so the snapshot captures the real
+                -- native size, not our modified ungroupBtnSize.
+                StripButtonDecorations(btn)
+                btn:SetSize(ungroupBtnSize, ungroupBtnSize)
+            end
+            if freeMove then
+                local yOff = fmBaseY + (idx - 1) * ungroupBtnSize
+                btn:SetPoint("BOTTOMRIGHT", minimap, "BOTTOMLEFT", 0, yOff)
+            elseif anchor then
+                btn:SetPoint("BOTTOM", anchor, "TOP", 0, 0)
+            else
+                btn:SetPoint("BOTTOMRIGHT", minimap, "BOTTOMLEFT", 0, 0)
+            end
+            btn:SetMovable(false)
+            btn:RegisterForDrag()
+            btn:SetScript("OnDragStart", nil)
+            btn:SetScript("OnDragStop", nil)
+            if showBg then
+                local icon = btn.icon or btn.Icon
+                if not icon then
+                    for _, region in ipairs({ btn:GetRegions() }) do
+                        if region:IsObjectType("Texture") and region:IsShown()
+                           and region:GetAlpha() > 0 and not IsJunkTexture(region)
+                           and region ~= GetFFD(btn).ungroupBg then
+                            icon = region
+                            break
+                        end
+                    end
+                end
+                if icon then
+                    icon:ClearAllPoints()
+                    icon:SetPoint("TOPLEFT", btn, "TOPLEFT", 3, -3)
+                    icon:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", -3, 3)
+                    pcall(icon.SetTexCoord, icon, 0.05, 0.95, 0.05, 0.95)
+                end
+                -- Black square background
+                if not GetFFD(btn).ungroupBg then
+                    local ubg = CreateFrame("Frame", nil, btn, "BackdropTemplate")
+                    ubg:SetBackdrop({ bgFile = "Interface\\ChatFrame\\ChatFrameBackground" })
+                    ubg:SetBackdropColor(0, 0, 0, 0.8)
+                    ubg:SetAllPoints(btn)
+                    GetFFD(btn).ungroupBg = ubg
+                end
+                -- Re-assert strata/level every layout; the flyout child-loop
+                -- bumps all children to DIALOG which would render the bg
+                -- above the icon after ungrouping.
+                local ubg = GetFFD(btn).ungroupBg
+                ubg:SetFrameStrata(btn:GetFrameStrata())
+                ubg:SetFrameLevel(btn:GetFrameLevel() - 1)
+                ubg:Show()
+                if btn._ungroupRing then btn._ungroupRing:Hide() end
+            else
+                -- No backgrounds: restore native appearance, hide our overlays.
+                -- Do NOT override button size — native ring textures have fixed
+                -- anchors that only look correct at the button's original size.
+                RestoreButtonDecorations(btn)
+                if GetFFD(btn).ungroupBg then GetFFD(btn).ungroupBg:Hide() end
+                if btn._ungroupRing then btn._ungroupRing:Hide() end
+            end
+            _suppressVisTrack = true
+            btn:SetAlpha(1)
+            btn:Show()
+            _suppressVisTrack = false
+            anchor = btn
+        end
+
+        -- Extra buttons: Friends Online (visibility via hideExtraBtns)
+        local heb = p.hideExtraBtns or {}
+
+        -- Friends Online button: top of the ungrouped stack
+        if ci.friends then
+            if heb.friendsOnline then
+                ci.friends:Hide()
+            else
+                ci.friends:SetSize(sz, sz)
+                if ci.friends._bg then ci.friends._bg:SetShown(showBg) end
+                ci.friends:SetParent(minimap)
+                ci.friends:SetFrameLevel(minimap:GetFrameLevel() + 11)
+                ci.friends:ClearAllPoints()
+                if freeMove then
+                    local idx = #ungrouped + (flyoutVisible and 1 or 0)
+                    local yOff = idx * ungroupBtnSize
+                    ci.friends:SetPoint("BOTTOMRIGHT", minimap, "BOTTOMLEFT", 0, yOff)
+                elseif anchor then
+                    ci.friends:SetPoint("BOTTOM", anchor, "TOP", 0, 0)
+                else
+                    ci.friends:SetPoint("BOTTOMRIGHT", minimap, "BOTTOMLEFT", 0, 0)
+                end
+                ci.friends:Show()
+                anchor = ci.friends
+            end
+        end
+
+        -- Flyout toggle (group button for addon icons)
+        if flyoutToggle and heb.groupButton then
+            flyoutToggle:Hide()
+        end
+    end
+
+    -- Free Move: hook shift+drag on all indicator buttons and apply saved offsets
+    local heb = p.hideExtraBtns or {}
+    local freeMove = p.freeMoveBtns
+    local fmTargets = {}
+    if ci.tracking and not p.hideTrackingButton then fmTargets[#fmTargets + 1] = ci.tracking end
+    if ci.calendar and not p.hideGameTime then fmTargets[#fmTargets + 1] = ci.calendar end
+    if ci.mail then fmTargets[#fmTargets + 1] = ci.mail end
+    if flyoutToggle then fmTargets[#fmTargets + 1] = flyoutToggle end
+    if ci.friends and not heb.friendsOnline then fmTargets[#fmTargets + 1] = ci.friends end
+    -- Include ungrouped addon buttons
+    for _, btn in ipairs(cachedAddonButtons) do
+        if _addonVisible[btn] ~= false and IsUngrouped(btn) then
+            fmTargets[#fmTargets + 1] = btn
+        end
+    end
+    for _, frame in ipairs(fmTargets) do
+        EnableFreeMove(frame)
+        if freeMove then
+            ApplyBtnOffset(frame)
+        end
+    end
+
+    -- Mouseover Extra Buttons: apply after layout so the managed-button list and
+    -- their alpha reflect the current shown/hidden state.
+    MO_Refresh(p)
+end
+
+local function RestoreIndicatorFrames()
+    -- Hide our custom indicator buttons
+    for _, btn in pairs(_customIndicators) do
+        if btn and btn.Hide then btn:Hide() end
+    end
+    -- Restore Blizzard originals
+    local tracking = MinimapCluster and MinimapCluster.Tracking
+    if tracking then tracking:SetAlpha(1); tracking:EnableMouse(true) end
+    local gameTime = _G.GameTimeFrame
+    if gameTime then gameTime:SetAlpha(1); gameTime:EnableMouse(true) end
+    local indicator = MinimapCluster and MinimapCluster.IndicatorFrame
+    if indicator then
+        if indicator.MailFrame then indicator.MailFrame:SetAlpha(1); indicator.MailFrame:EnableMouse(true) end
+    end
+    if indicatorBg then indicatorBg:Hide() end
+end
+
+-------------------------------------------------------------------------------
+-- Snapshot Blizzard minimap size and position on first install.
+-- Captures the native size and center position so our module starts matching
+-- whatever the user had via Edit Mode. Only runs once per profile.
+-------------------------------------------------------------------------------
+local function CaptureBlizzardMinimap()
+    local minimap = Minimap
+    if not minimap then return end
+    local p = MM.db.profile.minimap
+    if p._capturedOnce then return end
+
+    local uiScale = UIParent:GetEffectiveScale()
+    local mScale  = minimap:GetEffectiveScale()
+    local ratio   = mScale / uiScale
+
+    -- Capture size (use the larger dimension to keep it square)
+    local w, h = minimap:GetWidth(), minimap:GetHeight()
+    if w and w > 10 then
+        local sz = math.floor(math.max(w, h) * ratio + 0.5)
+        p.mapSize = sz
+    end
+
+    -- Capture center position as CENTER/CENTER offset from UIParent
+    local cx, cy = minimap:GetCenter()
+    if cx and cy then
+        local uiW, uiH = UIParent:GetSize()
+        cx = cx * ratio
+        cy = cy * ratio
+        p.position = {
+            point = "CENTER", relPoint = "CENTER",
+            x = cx - (uiW / 2), y = cy - (uiH / 2),
+        }
+    end
+
+    p._capturedOnce = true
+end
+
+local function ApplyMinimap()
+    if TEMP_DISABLED.minimap then return end
+    if InCombatLockdown() then QueueApplyAll(); return end
+
+    local p = MM.db.profile.minimap
+    p.enabled = true
+
+    -- Rotate Minimap: enforce the CVar to match our setting. Default off keeps
+    -- it at 0; turning it on sets 1. Runs out of combat (ApplyMinimap defers).
+    SetCVar("rotateMinimap", p.rotateMinimap and "1" or "0")
+
+    local minimap = Minimap
+    if not minimap then return end
+
+    if not p.enabled then
+        -- If we never touched the minimap this session, do absolutely nothing.
+        -- This ensures zero interference with other minimap addons.
+        if not GetFFD(minimap).active then return end
+        -- Module was active but is now disabled; a reload is required to
+        -- cleanly hand control back to Blizzard. The options toggle handles
+        -- prompting the user for a reload.
+        return
+    end
+
+    -- Ensure Blizzard_TimeManager is loaded so GameTimeFrame (calendar) exists
+    if not _G.GameTimeFrame and C_AddOns and C_AddOns.LoadAddOn then
+        C_AddOns.LoadAddOn("Blizzard_TimeManager")
+    end
+
+    -- Snapshot Blizzard's native size/position before we modify anything
+    CaptureBlizzardMinimap()
+
+    -- Reparent minimap to UIParent so MinimapCluster layout cannot override our size.
+    -- Deferred via C_Timer.After(0) to avoid tainting the secure frame environment
+    -- when ApplyMinimap fires during a ShowUIPanel/World Map open sequence, which
+    -- would cause ADDON_ACTION_BLOCKED when Blizzard's dungeon pin data provider
+    -- later calls the protected SetPropagateMouseClicks() on map pins.
+    local needsReparent = minimap:GetParent() ~= UIParent
+    local needsClusterHide = MinimapCluster and MinimapCluster:IsShown()
+    if needsReparent or needsClusterHide then
+        C_Timer.After(0, function()
+            if InCombatLockdown() then return end
+            if needsReparent and minimap:GetParent() ~= UIParent then
+                minimap:SetParent(UIParent)
+            end
+            if needsClusterHide and MinimapCluster then
+                MinimapCluster:SetAlpha(0)
+                MinimapCluster:EnableMouse(false)
+            end
+        end)
+    end
+    -- Guard reparent: Blizzard reparents the minimap during certain transitions
+    -- and other events. Hook SetParent to force it back to UIParent.
+    if not GetFFD(minimap).parentGuard then
+        GetFFD(minimap).parentGuard = true
+        hooksecurefunc(minimap, "SetParent", function()
+            if minimap:GetParent() ~= UIParent then
+                if not InCombatLockdown() then
+                    minimap:SetParent(UIParent)
+                end
+            end
+        end)
+        -- Lock strata/level so Blizzard can't change them during transitions
+        if minimap.SetFixedFrameStrata then minimap:SetFixedFrameStrata(true) end
+        if minimap.SetFixedFrameLevel then minimap:SetFixedFrameLevel(true) end
+    end
+    minimap:Show()
+
+    -- Middle-click interceptor: prevent minimap ping on middle-click,
+    -- route middle-click to our micro menu instead.
+    -- Transparent frame on top of minimap that passes left/right clicks through
+    -- but intercepts middle-click. Zero taint risk.
+    if not GetFFD(minimap).pingBlocker then
+        local blocker = CreateFrame("Frame", nil, minimap)
+        blocker:SetAllPoints()
+        blocker:SetFrameLevel(minimap:GetFrameLevel() + 10)
+        blocker:SetPassThroughButtons("LeftButton", "RightButton")
+        blocker:SetPropagateMouseMotion(true)
+        blocker:SetScript("OnMouseUp", function(_, btn)
+            if btn == "MiddleButton" and MM._ToggleMicroMenu then
+                -- Gated by the "Open Micro Menu on Middle Click" toggle (read live)
+                local mp = MM.db and MM.db.profile and MM.db.profile.minimap
+                if mp and mp.openMicroMenuOnMiddleClick == false then return end
+                MM._ToggleMicroMenu()
+            end
+        end)
+        GetFFD(minimap).pingBlocker = blocker
+    end
+
+    -- Hide default decorations
+    for _, name in ipairs(minimapDecorations) do
+        local frame = _G[name]
+        if frame then frame:Hide() end
+    end
+    -- Hide AddonCompartmentFrame by reparenting to a hidden frame
+    local compartment = _G.AddonCompartmentFrame
+    if compartment then
+        if not MM._hiddenFrame then
+            MM._hiddenFrame = CreateFrame("Frame")
+            MM._hiddenFrame:Hide()
+        end
+        GetFFD(compartment).origParent = GetFFD(compartment).origParent or compartment:GetParent()
+        compartment:SetParent(MM._hiddenFrame)
+    end
+
+    local isCircle = (p.shape == "circle" or p.shape == "textured_circle")
+
+    -- Hide background (no black bg behind minimap)
+    if GetFFD(minimap).bg then GetFFD(minimap).bg:SetAlpha(0) end
+
+    -- Border
+    local r, g, b = GetBorderColor(p)
+    -- Hide the circular quest area ring on square minimaps
+    if minimap.SetArchBlobRingScalar then
+        minimap:SetArchBlobRingScalar(isCircle and 1 or 0)
+    end
+    if minimap.SetQuestBlobRingScalar then
+        minimap:SetQuestBlobRingScalar(isCircle and 1 or 0)
+    end
+
+    if p.shape == "square" then
+        -- Square: pixel-perfect border
+        local bs = p.borderSize or 1
+        if not PP.GetBorders(minimap) then
+            PP.CreateBorder(minimap, r, g, b, 1, bs, "OVERLAY", 7)
+        else
+            PP.SetBorderColor(minimap, r, g, b, 1)
+        end
+        PP.SetBorderSize(minimap, bs)
+        if GetFFD(minimap).circBorder then GetFFD(minimap).circBorder:Hide() end
+        if GetFFD(minimap).texCircBorder then GetFFD(minimap).texCircBorder:Hide() end
+    elseif p.shape == "circle" then
+        -- Circle: solid colored disc behind the minimap, slightly larger = border ring
+        if PP.GetBorders(minimap) then PP.SetBorderSize(minimap, 0); PP.SetBorderColor(minimap, 0, 0, 0, 0) end
+        if not GetFFD(minimap).circBorder then
+            local disc = CreateFrame("Frame", nil, minimap)
+            disc:SetFrameLevel(minimap:GetFrameLevel() - 1)
+            local tex = disc:CreateTexture(nil, "BACKGROUND")
+            tex:SetAllPoints(disc)
+            tex:SetTexture("Interface\\Common\\CommonMaskCircle")
+            disc._tex = tex
+            GetFFD(minimap).circBorder = disc
+        end
+        local bs = p.borderSize or 1
+        local circBorder = GetFFD(minimap).circBorder
+        circBorder:ClearAllPoints()
+        circBorder:SetPoint("TOPLEFT", minimap, "TOPLEFT", -bs, bs)
+        circBorder:SetPoint("BOTTOMRIGHT", minimap, "BOTTOMRIGHT", bs, -bs)
+        circBorder._tex:SetVertexColor(r, g, b, 1)
+        circBorder:Show()
+        if GetFFD(minimap).texCircBorder then GetFFD(minimap).texCircBorder:Hide() end
+    elseif p.shape == "textured_circle" then
+        -- Textured Circle: void ring border, hide the solid circle border
+        if PP.GetBorders(minimap) then PP.SetBorderSize(minimap, 0); PP.SetBorderColor(minimap, 0, 0, 0, 0) end
+        if GetFFD(minimap).circBorder then GetFFD(minimap).circBorder:Hide() end
+        if not GetFFD(minimap).texCircBorder then
+            local ring = minimap:CreateTexture(nil, "OVERLAY", nil, 7)
+            OldschoolUI.SafeAtlas(ring, "wowlabs_minimapvoid-ring-single")
+            GetFFD(minimap).texCircBorder = ring
+        end
+        local inset = 2
+        local texCircBorder = GetFFD(minimap).texCircBorder
+        texCircBorder:ClearAllPoints()
+        texCircBorder:SetPoint("TOPLEFT", minimap, "TOPLEFT", -inset, inset)
+        texCircBorder:SetPoint("BOTTOMRIGHT", minimap, "BOTTOMRIGHT", inset, -inset)
+        texCircBorder:SetVertexColor(r, g, b, 1)
+        texCircBorder:Show()
+    end
+
+    -- Live-update border when accent color changes (only when using accent)
+    if p.useClassColor then
+        if not GetFFD(minimap).accentBorderCB then
+            GetFFD(minimap).accentBorderCB = function(ar, ag, ab)
+                if PP.GetBorders(minimap) then
+                    PP.SetBorderColor(minimap, ar, ag, ab, 1)
+                end
+                local cb = GetFFD(minimap).circBorder
+                if cb and cb:IsShown() then
+                    cb._tex:SetVertexColor(ar, ag, ab, 1)
+                end
+                local tcb = GetFFD(minimap).texCircBorder
+                if tcb and tcb:IsShown() then
+                    tcb:SetVertexColor(ar, ag, ab, 1)
+                end
+            end
+        end
+        OldschoolUI.RegAccent({ type = "callback", fn = GetFFD(minimap).accentBorderCB })
+    end
+
+    -- Size
+    minimap:SetScale(1.0)
+    local mapSize = p.mapSize or 140
+    minimap:SetSize(mapSize, mapSize)
+    -- Shape mask
+    local maskID = isCircle and 186178 or 130937
+    minimap:SetMaskTexture(maskID)
+    -- Clamp to screen so the border never extends off-screen
+    minimap:SetClampedToScreen(true)
+    local bInset = isCircle and (p.borderSize or 1) or 0
+    minimap:SetClampRectInsets(-bInset, bInset, bInset, -bInset)
+    -- Force the minimap engine to re-render at the new size.
+    -- Nudge zoom to a different value then immediately restore (same frame).
+    local curZoom = minimap:GetZoom()
+    minimap:SetZoom(curZoom > 0 and 0 or 1)
+    minimap:SetZoom(curZoom)
+
+    -- Zoom buttons removed entirely for a clean look -- zoom is via the mouse
+    -- wheel (scrollZoom). Hide both the child (minimap.ZoomIn) and legacy global
+    -- (MinimapZoomIn) forms, and keep them hidden if Blizzard re-shows them.
+    local function KillZoomBtn(b)
+        if not b then return end
+        b:Hide(); b:SetAlpha(0); b:EnableMouse(false)
+        flyoutOwnedFrames[b] = true
+        if not GetFFD(b).zoomKilled then
+            GetFFD(b).zoomKilled = true
+            hooksecurefunc(b, "Show", function(self) self:SetAlpha(0); self:EnableMouse(false); self:Hide() end)
+        end
+    end
+    KillZoomBtn(minimap.ZoomIn);  KillZoomBtn(_G.MinimapZoomIn)
+    KillZoomBtn(minimap.ZoomOut); KillZoomBtn(_G.MinimapZoomOut)
+
+    -- Flyout toggle button (bottom-left corner) -- create before hiding children
+    CreateFlyoutToggle()
+
+    -- Hide ALL minimap child frames from the map surface
+    HideAllMinimapButtons()
+
+    -- Show/hide flyout toggle based on whether any grouped buttons exist
+    local groupedButtons = CollectFlyoutButtons()
+    local mp2 = MM.db and MM.db.profile and MM.db.profile.minimap
+    local hideGroupBtn = mp2 and mp2.hideExtraBtns and mp2.hideExtraBtns.groupButton
+    if #groupedButtons > 0 and not hideGroupBtn then
+        flyoutToggle:Show()
+    else
+        flyoutToggle:Hide()
+    end
+
+    -- Poll for late-loading addons that attach buttons after ADDON_LOADED
+    if not addonButtonPoll then
+        addonButtonPoll = CreateFrame("Frame")
+        addonButtonPoll:RegisterEvent("ADDON_LOADED")
+        local pollPending = false
+        addonButtonPoll:SetScript("OnEvent", function()
+            if pollPending then return end
+            pollPending = true
+            C_Timer.After(0.1, function()
+                pollPending = false
+                HideAllMinimapButtons()
+                -- New buttons may have appeared; force flyout rebuild on
+                -- next open so they get picked up by the grid.
+                InvalidateFlyout()
+                -- If the flyout is already open, rebuild immediately so
+                -- newly-discovered buttons appear without closing/reopening.
+                if flyoutPanel and flyoutPanel:IsShown() then
+                    BuildFlyoutContents()
+                end
+            end)
+        end)
+    end
+    addonButtonPoll:Show()
+
+    -- Force the flyout to rebuild on next open so it picks up any
+    -- changes to the button list (ungroup, new addon, profile swap, etc.)
+    -- and re-shows buttons that HideAllMinimapButtons just hid.
+    InvalidateFlyout()
+    -- Close the flyout if it was open (layout may have changed)
+    HideFlyoutPanel()
+
+    -- Hide Blizzard zone text (we use our own location bar)
+    local zoneBtn = MinimapZoneTextButton
+    if zoneBtn then zoneBtn:Hide() end
+    if MinimapCluster and MinimapCluster.ZoneTextButton then
+        MinimapCluster.ZoneTextButton:Hide()
+    end
+    if MinimapZoneText then MinimapZoneText:Hide() end
+
+    -- Refresh cached clock CVars when settings are applied
+    RefreshClockCVars()
+
+    -- Clock -- top center (outside) or top inside the minimap
+    if p.showClock then
+        if not clockBg then
+            clockBg = CreateFrame("Button", nil, minimap, "BackdropTemplate")
+            clockBg:SetSize(80, 16)
+            clockBg:SetPoint("TOP", minimap, "TOP", 0, 7)
+            clockBg:SetBackdrop({ bgFile = "Interface\\ChatFrame\\ChatFrameBackground" })
+            clockBg:SetFrameLevel(minimap:GetFrameLevel() + 5)
+            clockBg:RegisterForClicks("AnyUp")
+            clockBg:SetScript("OnClick", function()
+                if ToggleTimeManager then ToggleTimeManager() end
+            end)
+        end
+        if not clockFrame then
+            clockFrame = clockBg:CreateFontString(nil, "OVERLAY")
+            ApplyMinimapFont(clockFrame, 10)
+            clockFrame:SetPoint("CENTER", clockBg, "CENTER", 0, 0)
+            clockFrame:SetTextColor(1, 1, 1, 0.9)
+        end
+        -- Position and background based on inside/outside setting
+        local clockInside = p.clockInside
+        local cxOff = p.clockOffsetX or 0
+        local cyOff = p.clockOffsetY or 0
+        if clockInside then
+            clockBg:SetBackdropColor(0, 0, 0, 0)
+            clockBg:ClearAllPoints()
+            clockBg:SetPoint("TOP", minimap, "TOP", cxOff, -4 + cyOff)
+        else
+            local ar, ag, ab = GetBorderColor(p)
+            clockBg:SetBackdropColor(ar, ag, ab, 1)
+            local clockYOff = isCircle and -3 or 7
+            clockBg:ClearAllPoints()
+            clockBg:SetPoint("TOP", minimap, "TOP", cxOff, clockYOff + cyOff)
+        end
+        local cs = p.clockScale or 1.15
+        clockBg:SetScale(cs)
+        clockBg:Show()
+        clockFrame:Show()
+        if not clockTicker then
+            clockTicker = CreateFrame("Frame")  -- kept for CVar event + Show/Hide API
+            clockTicker._ticker = nil
+            clockTicker.Show = function(self)
+                if self._ticker then return end
+                self._ticker = C_Timer.NewTicker(10, function()
+                    UpdateClock()
+                end)
+            end
+            clockTicker.Hide = function(self)
+                if self._ticker then self._ticker:Cancel(); self._ticker = nil end
+            end
+            clockTicker:RegisterEvent("CVAR_UPDATE")
+            clockTicker:SetScript("OnEvent", function(_, _, cvarName)
+                if cvarName == "timeMgrUseMilitaryTime" or cvarName == "timeMgrUseLocalTime" then
+                    RefreshClockCVars()
+                    UpdateClock()
+                end
+            end)
+        end
+        clockTicker:Show()
+        UpdateClock()
+    else
+        if clockBg then clockBg:Hide() end
+        if clockFrame then clockFrame:Hide() end
+        if clockTicker then clockTicker:Hide() end
+    end
+
+    -- Indicator frames (tracking, calendar, mail)
+    LayoutIndicatorFrames(minimap, p, isCircle)
+
+    -- Hook Blizzard mail Show/Hide to sync our custom indicator visibility
+    local indicator = MinimapCluster and MinimapCluster.IndicatorFrame
+    local mailFrame = indicator and indicator.MailFrame
+    if mailFrame and not GetFFD(mailFrame).visHooked then
+        GetFFD(mailFrame).visHooked = true
+        local function onMailChange()
+            local mp = MM.db and MM.db.profile.minimap
+            if not mp or not mp.enabled then return end
+            SyncIndicatorVisibility()
+            LayoutIndicatorFrames(minimap, mp, (mp.shape or "square") ~= "square")
+        end
+        hooksecurefunc(mailFrame, "Show", onMailChange)
+        hooksecurefunc(mailFrame, "Hide", onMailChange)
+    end
+
+    -- LFG queue events drive the queue indicator's visibility (show while queued).
+    if not _lfgQueueWatcher then
+        _lfgQueueWatcher = CreateFrame("Frame")
+        _lfgQueueWatcher:RegisterEvent("LFG_UPDATE")
+        _lfgQueueWatcher:RegisterEvent("LFG_QUEUE_STATUS_UPDATE")
+        _lfgQueueWatcher:RegisterEvent("LFG_PROPOSAL_SHOW")
+        _lfgQueueWatcher:RegisterEvent("LFG_PROPOSAL_DONE")
+        _lfgQueueWatcher:RegisterEvent("LFG_PROPOSAL_FAILED")
+        _lfgQueueWatcher:RegisterEvent("LFG_ROLE_CHECK_SHOW")
+        _lfgQueueWatcher:RegisterEvent("PLAYER_ENTERING_WORLD")
+        _lfgQueueWatcher:SetScript("OnEvent", function(self)
+            local mp = MM.db and MM.db.profile.minimap
+            if not mp or not mp.enabled then return end
+            -- LFG_QUEUE_STATUS_UPDATE fires frequently; only relayout when the
+            -- queued/not-queued state actually flips (wait times are read live
+            -- in the tooltip).
+            local active = QueueIsActive()
+            if active == self._wasActive then return end
+            self._wasActive = active
+            SyncIndicatorVisibility()
+            LayoutIndicatorFrames(minimap, mp, (mp.shape or "square") ~= "square")
+        end)
+    end
+
+    -- Location bar -- bottom center (outside) or bottom inside the minimap
+    if not p.hideZoneText then
+        if not locationBg then
+            locationBg = CreateFrame("Frame", nil, minimap, "BackdropTemplate")
+            locationBg:SetSize(120, 18)
+            locationBg:SetPoint("BOTTOM", minimap, "BOTTOM", 0, -7)
+            locationBg:SetBackdrop({ bgFile = "Interface\\ChatFrame\\ChatFrameBackground" })
+            locationBg:SetFrameLevel(minimap:GetFrameLevel() + 5)
+            locationBg:RegisterEvent("ZONE_CHANGED")
+            locationBg:RegisterEvent("ZONE_CHANGED_INDOORS")
+            locationBg:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+            locationBg:RegisterEvent("PLAYER_REGEN_ENABLED")
+            locationBg:SetScript("OnEvent", function() UpdateLocation() end)
+        end
+        if not locationFrame then
+            locationFrame = locationBg:CreateFontString(nil, "OVERLAY")
+            ApplyMinimapFont(locationFrame, 10)
+            locationFrame:SetPoint("CENTER", locationBg, "CENTER", 0, 0)
+            locationFrame:SetTextColor(1, 1, 1, 0.9)
+        end
+        -- Position and background based on inside/outside setting
+        local zoneInside = p.zoneInside
+        local lxOff = p.locationOffsetX or 0
+        local lyOff = p.locationOffsetY or 0
+        if zoneInside then
+            locationBg:SetBackdropColor(0, 0, 0, 0)
+            locationBg:ClearAllPoints()
+            locationBg:SetPoint("BOTTOM", minimap, "BOTTOM", lxOff, 4 + lyOff)
+        else
+            local ar, ag, ab = GetBorderColor(p)
+            locationBg:SetBackdropColor(ar, ag, ab, 1)
+            local locYOff = isCircle and 3 or -7
+            locationBg:ClearAllPoints()
+            locationBg:SetPoint("BOTTOM", minimap, "BOTTOM", lxOff, locYOff + lyOff)
+        end
+        local ls = p.locationScale or 1.15
+        locationBg:SetScale(ls)
+        locationBg:Show()
+        locationFrame:Show()
+        UpdateLocation()
+    else
+        if locationBg then locationBg:Hide() end
+        if locationFrame then locationFrame:Hide() end
+    end
+
+    -- Coordinates -- hover mode (inside minimap) or always-on below minimap
+    if not coordFrame then
+        coordFrame = minimap:CreateFontString(nil, "OVERLAY")
+        ApplyMinimapFont(coordFrame, 11)
+        coordFrame:SetTextColor(1, 1, 1, 0.9)
+    end
+    local coordsBelow = p and p.coordsBelow
+    coordFrame:ClearAllPoints()
+    if coordsBelow then
+        local cx = p and p.coordsBelowOffsetX or 0
+        local cy = p and p.coordsBelowOffsetY or 0
+        coordFrame:SetPoint("TOP", minimap, "BOTTOM", cx, -5 + cy)
+    else
+        coordFrame:SetPoint("TOPLEFT", minimap, "TOPLEFT", 4, -4)
+    end
+    if not coordTicker then
+        coordTicker = CreateFrame("Frame")  -- kept for Show/Hide API
+        coordTicker._ticker = nil
+        coordTicker.Show = function(self)
+            if self._ticker then return end
+            self._ticker = C_Timer.NewTicker(0.5, function()
+                UpdateCoords()
+            end)
+        end
+        coordTicker.Hide = function(self)
+            if self._ticker then self._ticker:Cancel(); self._ticker = nil end
+        end
+    end
+    if coordsBelow then
+        coordFrame:Show()
+        coordTicker:Show()
+        UpdateCoords()
+    else
+        coordFrame:Hide()
+        coordTicker:Hide()
+    end
+    -- Coords ticker only runs while hovering the minimap (when not in below mode)
+    if not GetFFD(minimap).coordsHooked then
+        minimap:HookScript("OnEnter", function(self)
+            if not GetFFD(self).active then return end
+            local mp = MM.db and MM.db.profile.minimap
+            if mp and mp.coordsBelow then return end
+            if coordFrame then coordFrame:Show() end
+            coordTicker:Show()
+            UpdateCoords()
+        end)
+        minimap:HookScript("OnLeave", function(self)
+            if not GetFFD(self).active then return end
+            local mp = MM.db and MM.db.profile.minimap
+            if mp and mp.coordsBelow then return end
+            if coordFrame and not self:IsMouseOver() then coordFrame:Hide() end
+            coordTicker:Hide()
+        end)
+        GetFFD(minimap).coordsHooked = true
+    end
+
+    -- Mousewheel zoom
+    if p.scrollZoom then
+        minimap:EnableMouseWheel(true)
+        if not GetFFD(minimap).zoomHooked then
+            GetFFD(minimap).zoomHooked = true
+            minimap:HookScript("OnMouseWheel", function(self, delta)
+                local mp = MM.db and MM.db.profile.minimap
+                if not mp or not mp.scrollZoom then return end
+                local zoom = self:GetZoom()
+                if delta > 0 then
+                    zoom = min(zoom + 1, 5)
+                else
+                    zoom = max(zoom - 1, 0)
+                end
+                self:SetZoom(zoom)
+                SaveZoomLevel()
+            end)
+        end
+    else
+        minimap:EnableMouseWheel(false)
+    end
+
+    -- Restore saved zoom level on first activation
+    if not GetFFD(minimap).active then
+        local saved = p.savedZoom or 0
+        if saved >= 0 and saved <= minimap:GetZoomLevels() then
+            minimap:SetZoom(saved)
+        end
+    end
+
+    -- Position: only set on first activation; after that, unlock mode owns positioning.
+    if not GetFFD(minimap).active then
+        minimap:ClearAllPoints()
+        if p.position then
+            local px, py = p.position.x, p.position.y
+            local PPa = OldschoolUI and OldschoolUI.PP
+            if PPa and px and py then
+                local es = minimap:GetEffectiveScale()
+                local isCenterAnchor = (p.position.point == "CENTER")
+                    and (p.position.relPoint == "CENTER" or p.position.relPoint == nil)
+                if isCenterAnchor and PPa.SnapCenterForDim then
+                    px = PPa.SnapCenterForDim(px, minimap:GetWidth() or 0, es)
+                    py = PPa.SnapCenterForDim(py, minimap:GetHeight() or 0, es)
+                elseif PPa.SnapForES then
+                    px = PPa.SnapForES(px, es)
+                    py = PPa.SnapForES(py, es)
+                end
+            end
+            minimap:SetPoint(p.position.point, UIParent, p.position.relPoint, px, py)
+        else
+            minimap:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -10, -10)
+        end
+    end
+
+    -- Mark module as active so persistent hooks know they can fire
+    GetFFD(minimap).active = true
+end
+
+
+-------------------------------------------------------------------------------
+--  Visibility (registered with the shared OldschoolUI visibility dispatcher)
+-------------------------------------------------------------------------------
+local function UpdateMinimapVisibility()
+    local p = MM.db and MM.db.profile and MM.db.profile.minimap
+    if not p or not p.enabled then return end
+    local vis = OldschoolUI.EvalVisibility(p)
+    local minimap = Minimap
+    if not minimap then return end
+    if vis == "mouseover" then
+        minimap:SetAlpha(0)
+        minimap:Show()
+    elseif vis then
+        minimap:SetAlpha(1)
+        minimap:Show()
+    else
+        minimap:Hide()
+    end
+end
+
+-------------------------------------------------------------------------------
+--  Apply All
+-------------------------------------------------------------------------------
+ApplyAll = function()
+    ApplyMinimap()
+    if OldschoolUI.RequestVisibilityUpdate then
+        C_Timer.After(0, OldschoolUI.RequestVisibilityUpdate)
+    end
+end
+
+-------------------------------------------------------------------------------
+--  Lifecycle
+-------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
+--  Minimap Micro Menu (middle-click popup, taint-free)
+--  SecureActionButtonTemplate buttons with click passthrough to Blizzard
+--  MicroButtons via RegisterStateDriver (secure environment activation).
+--  NEVER call EnableMouse/SetAlpha on the secure buttons from addon code
+--  after creation -- that breaks the secure trust chain.
+--  Show/hide is done by moving the parent frame offscreen.
+-------------------------------------------------------------------------------
+do
+    local menuFrame
+    local menuOpen    = false
+    local MENU_WIDTH  = 160
+    local BUTTON_H    = 20
+    local PADDING     = 6
+    local DIVIDER_H   = 9
+
+    -- MoP micro menu: use direct Toggle* functions (not retail MicroButton
+    -- passthrough). All labels go through OldschoolUI.L() for deDE.
+    local menuItems = {
+        { text = "Character",      fn = function() ToggleCharacter("PaperDollFrame") end },
+        { text = "Spellbook",      fn = function() if ToggleSpellBook then ToggleSpellBook(BOOKTYPE_SPELL or "spell") end end },
+        { text = "Talents",        fn = function() if ToggleTalentFrame then ToggleTalentFrame() end end },
+        { divider = true },
+        { text = "Dungeon Finder", fn = function()
+            if PVEFrame_ToggleFrame then PVEFrame_ToggleFrame()
+            elseif ToggleLFDParentFrame then ToggleLFDParentFrame() end
+        end },
+        { text = "Adventure Guide", fn = function() if ToggleEncounterJournal then ToggleEncounterJournal() end end },
+        { text = "Achievements",   fn = function() if ToggleAchievementFrame then ToggleAchievementFrame() end end },
+        { text = "Quest Log",      fn = function() if ToggleQuestLog then ToggleQuestLog() end end },
+        { divider = true },
+        { text = "Friends",        fn = function() if ToggleFriendsFrame then ToggleFriendsFrame(1) end end },
+        { text = "Guild",          fn = function() if ToggleGuildFrame then ToggleGuildFrame() end end },
+        { text = "Calendar",       fn = function() if ToggleCalendar then ToggleCalendar() end end },
+        { divider = true },
+        { text = "Game Menu",      fn = function() ToggleFrame(GameMenuFrame) end },
+        { text = "Shop",           fn = function() if ToggleStoreUI then ToggleStoreUI() end end },
+        { text = "Support",        fn = function() if ToggleHelpFrame then ToggleHelpFrame() end end },
+    }
+
+    local function SetMenuVisible(visible)
+        if not menuFrame then return end
+        menuOpen = visible
+        menuFrame:ClearAllPoints()
+        if visible then
+            menuFrame:SetClampedToScreen(true)
+            menuFrame:SetPoint("TOPRIGHT", Minimap, "TOPLEFT", -4, 0)
+        else
+            menuFrame:SetClampedToScreen(false)
+            menuFrame:SetPoint("TOPLEFT", UIParent, "TOPRIGHT", 10000, 0)
+        end
+    end
+
+    local function CreateMenuFrame()
+        menuFrame = CreateFrame("Frame", "OldschoolUIMicroMenu", UIParent, "BackdropTemplate")
+        menuFrame:SetFrameStrata("TOOLTIP")
+        menuFrame:SetBackdrop({
+            bgFile   = "Interface\\Buttons\\WHITE8X8",
+            edgeFile = "Interface\\Buttons\\WHITE8X8",
+            edgeSize = 1,
+        })
+        menuFrame:SetBackdropColor(0.05, 0.05, 0.05, 0.97)
+        menuFrame:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
+        menuFrame:EnableMouse(true)
+
+        -- Close when clicking elsewhere
+        menuFrame:RegisterEvent("GLOBAL_MOUSE_DOWN")
+        menuFrame:SetScript("OnEvent", function(self, event)
+            if event == "GLOBAL_MOUSE_DOWN" and menuOpen then
+                if not self:IsMouseOver() then SetMenuVisible(false) end
+            end
+        end)
+
+        local y = -PADDING
+        for _, item in ipairs(menuItems) do
+            if item.divider then
+                local div = menuFrame:CreateTexture(nil, "ARTWORK")
+                div:SetPoint("TOPLEFT", menuFrame, "TOPLEFT", 8, y - 4)
+                div:SetPoint("TOPRIGHT", menuFrame, "TOPRIGHT", -8, y - 4)
+                div:SetHeight(1)
+                div:SetColorTexture(0.3, 0.3, 0.3, 0.6)
+                y = y - DIVIDER_H
+            elseif item.fn then
+                -- Plain button (no secure template needed)
+                local btn = CreateFrame("Button", nil, menuFrame)
+                btn:SetPoint("TOPLEFT", menuFrame, "TOPLEFT", 1, y)
+                btn:SetPoint("TOPRIGHT", menuFrame, "TOPRIGHT", -1, y)
+                btn:SetHeight(BUTTON_H)
+
+                local hl = btn:CreateTexture(nil, "HIGHLIGHT")
+                hl:SetAllPoints()
+                hl:SetColorTexture(1, 1, 1, 0.08)
+
+                local label = btn:CreateFontString(nil, "OVERLAY")
+                label:SetFont((OldschoolUI.GetFontPath and OldschoolUI.GetFontPath("minimap")) or "Fonts\\FRIZQT__.TTF", 11, "")
+                label:SetShadowOffset(1, -1)
+                label:SetShadowColor(0, 0, 0, 1)
+                label:SetPoint("LEFT", btn, "LEFT", 10, 0)
+                label:SetTextColor(0.9, 0.9, 0.9)
+                label:SetText(OldschoolUI.L and OldschoolUI.L(item.text) or item.text)
+
+                local itemFn = item.fn
+                btn:SetScript("OnClick", function()
+                    SetMenuVisible(false)
+                    itemFn()
+                end)
+
+                y = y - BUTTON_H
+            else
+                -- Secure click passthrough to a Blizzard MicroButton
+                local microRef = item.microButton and _G[item.microButton]
+                local btnName = "OUI_MicroMenu_" .. item.text:gsub("%s", "")
+                local btn = CreateFrame("Button", btnName, menuFrame, "SecureActionButtonTemplate,SecureHandlerStateTemplate")
+                btn:SetPoint("TOPLEFT", menuFrame, "TOPLEFT", 1, y)
+                btn:SetPoint("TOPRIGHT", menuFrame, "TOPRIGHT", -1, y)
+                btn:SetHeight(BUTTON_H)
+
+                if microRef then
+                    btn:SetAttribute("*clickbutton1", microRef)
+                end
+                btn:SetAttribute("useOnKeyDown", false)
+                btn:SetAttribute("*type1", "click")
+                btn:EnableMouse(true)
+                btn:RegisterForClicks("AnyUp")
+
+                -- Activate secure click from the restricted secure environment.
+                -- Without this, addon-set attributes are not trusted.
+                RegisterStateDriver(btn, "combatlock", "[combat] combat; nocombat")
+                btn:SetAttribute("_onstate-combatlock", [[
+                    if newstate == 'combat' then
+                        self:SetAttribute('*type1', nil)
+                        self:EnableMouse(false)
+                    else
+                        self:SetAttribute('*type1', 'click')
+                        self:EnableMouse(true)
+                    end
+                ]])
+
+                local hl = btn:CreateTexture(nil, "HIGHLIGHT")
+                hl:SetAllPoints()
+                hl:SetColorTexture(1, 1, 1, 0.08)
+
+                local label = btn:CreateFontString(nil, "OVERLAY")
+                label:SetFont((OldschoolUI.GetFontPath and OldschoolUI.GetFontPath("minimap")) or "Fonts\\FRIZQT__.TTF", 11, "")
+                label:SetShadowOffset(1, -1)
+                label:SetShadowColor(0, 0, 0, 1)
+                label:SetPoint("LEFT", btn, "LEFT", 10, 0)
+                label:SetTextColor(0.9, 0.9, 0.9)
+                label:SetText(OldschoolUI.L and OldschoolUI.L(item.text) or item.text)
+
+                btn:HookScript("OnClick", function() C_Timer.After(0, function() SetMenuVisible(false) end) end)
+
+                y = y - BUTTON_H
+            end
+        end
+
+        menuFrame:SetSize(MENU_WIDTH, -y + PADDING)
+        menuFrame:Show()
+        SetMenuVisible(false)
+    end
+
+    local function ToggleMicroMenu()
+        if InCombatLockdown() then
+            UIErrorsFrame:AddMessage(ERR_NOT_IN_COMBAT, 1.0, 0.3, 0.3, 1.0)
+            return
+        end
+        if not menuFrame then CreateMenuFrame() end
+        SetMenuVisible(not menuOpen)
+    end
+    MM._ToggleMicroMenu = ToggleMicroMenu
+
+    local hookFrame = CreateFrame("Frame")
+    hookFrame:RegisterEvent("PLAYER_LOGIN")
+    hookFrame:SetScript("OnEvent", function(self)
+        self:UnregisterEvent("PLAYER_LOGIN")
+        CreateMenuFrame()
+    end)
+end
+
+function MM:OnInitialize()
+    local AceDB = LibStub and LibStub("AceDB-3.0", true)
+    MM.db = AceDB and AceDB:New("OldschoolUIMinimapDB", defaults)
+
+    -- Full rebuild: wipes cached button state so the next ApplyMinimap
+    -- re-snapshots native button sizes/textures from scratch (as if /reload).
+    -- Called when toggling btnBackgrounds or ungrouping a button.
+    local function FullRebuildMinimap()
+        wipe(flyoutSavedRegions)
+        ApplyMinimap()
+    end
+
+    -- Bridge for the options page <-> main module communication
+    OldschoolUI._minimapDB          = MM.db
+    OldschoolUI._minimapApply       = ApplyMinimap
+    OldschoolUI._minimapFullRebuild = FullRebuildMinimap
+
+    -- Register visibility updater + mouseover target
+    if OldschoolUI.RegisterVisibilityUpdater then
+        OldschoolUI.RegisterVisibilityUpdater(UpdateMinimapVisibility)
+    end
+    if OldschoolUI.RegisterMouseoverTarget and Minimap then
+        OldschoolUI.RegisterMouseoverTarget(Minimap, function()
+            local p = MM.db and MM.db.profile and MM.db.profile.minimap
+            return p and p.enabled and p.visibility == "mouseover"
+        end)
+    end
+end
+
+function MM:OnEnable()
+    ApplyAll()
+
+    -- Re-apply after PLAYER_ENTERING_WORLD so accent colors from the theme
+    -- system (which updates ACCENT at PLAYER_LOGIN) are picked up.
+    local loginRefresh = CreateFrame("Frame")
+    loginRefresh:RegisterEvent("PLAYER_ENTERING_WORLD")
+    loginRefresh:SetScript("OnEvent", function(self)
+        self:UnregisterAllEvents()
+        C_Timer.After(0, ApplyAll)
+    end)
+
+    -- If GameTimeFrame still doesn't exist, watch for Blizzard_TimeManager to load
+    if not _G.GameTimeFrame then
+        local tmWatcher = CreateFrame("Frame")
+        tmWatcher:RegisterEvent("ADDON_LOADED")
+        tmWatcher:SetScript("OnEvent", function(self, _, addon)
+            if addon == "Blizzard_TimeManager" then
+                self:UnregisterAllEvents()
+                if MM.db.profile.minimap.enabled then
+                    C_Timer.After(0, ApplyMinimap)
+                end
+            end
+        end)
+    end
+
+    -- Register minimap with unlock mode
+    if OldschoolUI and OldschoolUI.RegisterUnlockElements then
+        local MK = OldschoolUI.MakeUnlockElement
+        local function MDB() return MM.db and MM.db.profile.minimap end
+        OldschoolUI:RegisterUnlockElements({
+            MK({
+                key   = "OUIMinimap",
+                label = "Minimap",
+                group = "Minimap",
+                order = 500,
+                noResize = true,
+                noAnchorTo = true,
+                getFrame = function() return Minimap end,
+                getSize  = function()
+                    return Minimap:GetWidth(), Minimap:GetHeight()
+                end,
+                isHidden = function()
+                    local m = MDB()
+                    return not m or not m.enabled
+                end,
+                savePos = function(_, point, relPoint, x, y)
+                    local m = MDB(); if not m then return end
+                    m.position = { point = point, relPoint = relPoint, x = x, y = y }
+                    if not OldschoolUI._unlockActive then
+                        ApplyMinimap()
+                    end
+                end,
+                loadPos = function()
+                    local m = MDB()
+                    if not m or not m.enabled then return nil end
+                    return m.position
+                end,
+                clearPos = function()
+                    local m = MDB(); if not m then return end
+                    m.position = nil
+                end,
+                applyPos = function()
+                    local m = MDB()
+                    if not m or not m.enabled then return end
+                    -- Unlock mode saved a new CENTER offset, but ApplyMinimap's own
+                    -- position block only runs on first activation -- move the
+                    -- minimap to the saved position here so /ouimove takes effect.
+                    if m.position and Minimap then
+                        Minimap:ClearAllPoints()
+                        Minimap:SetPoint(m.position.point or "CENTER", UIParent,
+                            m.position.relPoint or "CENTER", m.position.x or 0, m.position.y or 0)
+                    end
+                    ApplyMinimap()
+                end,
+            }),
+        })
+    end
+end
+
+-------------------------------------------------------------------------------
+--  FarmHud Compatibility
+--  When FarmHud is active, keep the minimap centered in its frame and
+--  hide OldschoolUI border/background elements so they don't overlap.
+--  Credit: Discord user DnL (original concept), PR #293 by jonathanfernandezfm.
+-------------------------------------------------------------------------------
+do
+    local _fhLock = false
+
+    local fhFix = CreateFrame("Frame")
+    fhFix:RegisterEvent("PLAYER_ENTERING_WORLD")
+    fhFix:SetScript("OnEvent", function(self)
+        if not FarmHud then return end
+        self:UnregisterEvent("PLAYER_ENTERING_WORLD")
+
+        -- Keep the minimap centered in the FarmHud frame whenever
+        -- FarmHud or another addon repositions / reparents it.
+        hooksecurefunc(Minimap, "SetPoint", function(mm)
+            if FarmHud:IsShown() and not _fhLock then
+                _fhLock = true
+                mm:ClearAllPoints()
+                mm:SetPoint("CENTER", FarmHud, "CENTER", 0, 0)
+                _fhLock = false
+            end
+        end)
+
+        hooksecurefunc(Minimap, "SetParent", function(mm, parent)
+            if FarmHud:IsShown() and parent ~= FarmHud and not _fhLock then
+                _fhLock = true
+                mm:SetParent(FarmHud)
+                _fhLock = false
+            end
+        end)
+
+        -- Hide / restore OldschoolUI minimap borders
+        local function ToggleMinimapBorders(show)
+            local alpha = show and 1 or 0
+
+            -- Circle border
+            if GetFFD(Minimap).circBorder then GetFFD(Minimap).circBorder:SetAlpha(alpha) end
+            -- Textured circle border
+            if GetFFD(Minimap).texCircBorder then GetFFD(Minimap).texCircBorder:SetAlpha(alpha) end
+
+            -- Square pixel-perfect border
+            if OldschoolUI.PP and OldschoolUI.PP.GetBorders(Minimap) then
+                if show then
+                    local p = MM.db and MM.db.profile and MM.db.profile.minimap
+                    if p then
+                        local r, g, b, a = GetBorderColor(p)
+                        OldschoolUI.PP.SetBorderColor(Minimap, r, g, b, a)
+                    end
+                else
+                    OldschoolUI.PP.SetBorderColor(Minimap, 0, 0, 0, 0)
+                end
+            end
+        end
+
+        FarmHud:HookScript("OnShow", function() ToggleMinimapBorders(false) end)
+        FarmHud:HookScript("OnHide", function() ToggleMinimapBorders(true) end)
+    end)
+end

@@ -1,5 +1,5 @@
 -------------------------------------------------------------------------------
---  EUI_LootRoll_Session.lua
+--  OUI_LootRoll_Session.lua
 --  In-memory record of this session's completed group loot rolls.
 --  For each finished roll: the item, every player's roll type, and the winner.
 --  Sourced from C_LootHistory; snapshotted on LOOT_HISTORY_ROLL_COMPLETE and
