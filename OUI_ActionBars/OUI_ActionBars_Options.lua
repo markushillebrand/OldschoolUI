@@ -7,6 +7,7 @@ local OUI = OldschoolUI
 if not (OUI and OUI.RegisterModule) then return end
 
 local L  = OUI.L
+local Lf = OUI.Lf
 local AB = ns.AB
 
 local function DB() return (AB and AB.db and AB.db.profile) or {} end
@@ -61,18 +62,30 @@ OUI:RegisterModule("OUI_ActionBars", {
             get = function() local c = DB().outOfRangeColor or { 0.8, 0.15, 0.15 }; return c[1], c[2], c[3] end,
             set = function(r, g, b) DB().outOfRangeColor = { r, g, b }; Recolor() end,
         }))
+        page:AddRow(OUI.Widgets.Slider(page, {
+            label = "Faded opacity (%)",
+            tooltip = "Opacity for bars faded out by their visibility mode (In Combat / Out of Combat / Mouseover). 0 = hidden.",
+            min = 0, max = 100, step = 5,
+            -- stored 0-1 (used directly as alpha by the visibility driver)
+            get = function() return math.floor((DB().fadeAlpha or 0) * 100 + 0.5) end,
+            set = function(v) DB().fadeAlpha = v / 100 end,
+        }))
 
         -- -------- per-bar layout -----------------------------------------
         for _, bar in ipairs(ns.BARS or {}) do
             local key, count, defCols = bar.key, bar.count, bar.defCols
+            -- Bars 6-8 (MultiBar5/6/7) have no Blizzard toggle API in MoP Classic;
+            -- they must be switched on once in the Blizzard interface menu.
+            local needsMenu = (key == "Bar6" or key == "Bar7" or key == "Bar8")
             page:AddRow(OUI.Widgets.Toggle(page, {
                 label = rowLabel(bar, "Enabled"),
+                tooltip = needsMenu and L("Requires activation in the Blizzard interface menu (Action Bars).") or nil,
                 get = function() local c = DB().bars and DB().bars[key]; return c and c.enabled or false end,
                 set = function(v) DB().bars[key].enabled = v; ApplyBar(key) end,
             }))
             page:AddRow(OUI.Widgets.Slider(page, {
                 label = rowLabel(bar, "Columns"),
-                tooltip = "Buttons per row. 1 = vertical column, " .. count .. " = single horizontal row.",
+                tooltip = Lf("Buttons per row. 1 = vertical column, %d = single horizontal row.", count),
                 min = 1, max = count, step = 1,
                 get = function() return DB().bars[key].cols or defCols end,
                 set = function(v) DB().bars[key].cols = v; ApplyBar(key) end,

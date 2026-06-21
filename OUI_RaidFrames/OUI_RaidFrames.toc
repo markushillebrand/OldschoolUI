@@ -1,0 +1,10 @@
+## Interface: 50504
+## Title: OldschoolUI Raid Frames
+## Author: Lyonthedragon
+## Version: @project-version@
+## Notes: Party and raid member frames.
+## Dependencies: OldschoolUI
+## SavedVariables: OldschoolUIRaidFramesDB
+
+OUI_RaidFrames.lua
+OUI_RaidFrames_Options.lua

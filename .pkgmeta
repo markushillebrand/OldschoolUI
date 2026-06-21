@@ -1,6 +1,5 @@
-# BigWigs packager config. Mirrors the proven EllesmereUI setup; the NEW bits
-# for OUI are the Ace3 externals below. Reuse your working EllesmereUI .pkgmeta
-# if you prefer and just add the externals block + rename.
+# BigWigs packager config for OldschoolUI. Ace3 (MIT) is pulled in via the
+# externals block below; everything else is packaged from this repo.
 package-as: OldschoolUI
 
 enable-nolib-creation: no

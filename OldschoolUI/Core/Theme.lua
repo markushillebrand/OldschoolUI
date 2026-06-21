@@ -49,15 +49,63 @@ OUI.ResolveFactionTheme = ResolveFactionTheme
 
 function OUI.GetPlayerClassColor()
     local _, class = UnitClass("player")
-    local c = class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
-    if c then return c.r, c.g, c.b end
-    return DEFAULT.r, DEFAULT.g, DEFAULT.b
+    return OUI.GetClassColor(class)
 end
 
-function OUI.GetClassColor(token)
-    local c = token and RAID_CLASS_COLORS and RAID_CLASS_COLORS[token]
-    if c then return c.r, c.g, c.b end
-    return 1, 1, 1
+local CLASS_TOKENS = { "WARRIOR", "PALADIN", "HUNTER", "ROGUE", "PRIEST",
+    "DEATHKNIGHT", "SHAMAN", "MAGE", "WARLOCK", "MONK", "DRUID" }
+OUI.CLASS_TOKENS = CLASS_TOKENS
+
+local function clamp01(v) if v < 0 then return 0 elseif v > 1 then return 1 end return v end
+
+-- Class colour, 3-tier: module-profile override -> global override -> Blizzard,
+-- then a brightness multiplier (module-local intensity -> global intensity).
+-- `profile` is optional; pass a module's DB profile to honour its overrides.
+function OUI.GetClassColor(token, profile)
+    local glob = OUI.db and OUI.db.global
+    local r, g, b
+    local mo = profile and profile.classColors and profile.classColors[token]
+    local go = glob and glob.classColors and glob.classColors[token]
+    local base = mo or go
+    if base then
+        r, g, b = base.r or base[1], base.g or base[2], base.b or base[3]
+    else
+        local c = token and RAID_CLASS_COLORS and RAID_CLASS_COLORS[token]
+        if c then r, g, b = c.r, c.g, c.b else r, g, b = 1, 1, 1 end
+    end
+    local intensity
+    if profile and profile.colorIntensityOverride and profile.colorIntensity then
+        intensity = profile.colorIntensity
+    elseif glob and glob.colorIntensity then
+        intensity = glob.colorIntensity
+    else
+        intensity = 1.0
+    end
+    if intensity and intensity ~= 1.0 then
+        r, g, b = clamp01(r * intensity), clamp01(g * intensity), clamp01(b * intensity)
+    end
+    return r, g, b
+end
+
+function OUI.SetClassColor(token, r, g, b)
+    if not (OUI.db and token) then return end
+    OUI.db.global.classColors[token] = { r = r, g = g, b = b }
+    if OUI.NotifyStyle then OUI.NotifyStyle() end
+end
+
+function OUI.ResetClassColor(token)
+    if not (OUI.db and token) then return end
+    OUI.db.global.classColors[token] = nil
+    if OUI.NotifyStyle then OUI.NotifyStyle() end
+end
+
+function OUI.GetColorIntensity()
+    return (OUI.db and OUI.db.global.colorIntensity) or 1.0
+end
+
+function OUI.SetColorIntensity(v)
+    if OUI.db then OUI.db.global.colorIntensity = v end
+    if OUI.NotifyStyle then OUI.NotifyStyle() end
 end
 
 -- Effective accent r,g,b from the saved theme.

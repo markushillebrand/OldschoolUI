@@ -29,6 +29,8 @@ local DEFAULTS = {
         barTexture          = "flat",      -- shared default status-bar texture key
         borderColor         = { 0, 0, 0, 0.9 }, -- shared default border colour
         borderSize          = 1,           -- shared default border thickness (px)
+        classColors         = {},          -- [CLASS]={r,g,b} global per-class overrides (empty = Blizzard)
+        colorIntensity      = 1.0,         -- global class-colour brightness multiplier
     },
     char = {},
 }

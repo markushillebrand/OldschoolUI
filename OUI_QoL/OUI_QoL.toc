@@ -1,0 +1,15 @@
+## Interface: 50504
+## Title: OldschoolUI Quality of Life
+## Author: Lyonthedragon
+## Version: @project-version@
+## Notes: Lightweight quality of life tools and enhancements (clean-room rewrite, phase QL-1).
+## Dependencies: OldschoolUI
+## SavedVariables: OldschoolUIQoLDB
+
+OUI_QoL.lua
+OUI_QoL_Cursor.lua
+OUI_QoL_Bloodlust.lua
+OUI_QoL_AutoLogging.lua
+OUI_QoL_Shifter.lua
+
+OUI_QoL_Options.lua

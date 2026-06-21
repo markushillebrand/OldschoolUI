@@ -1,7 +1,7 @@
 ## Interface: 50504
 ## Title: OldschoolUI
 ## Notes: OldschoolUI - a clean MoP-Classic UI suite. Core.
-## Author: Markus
+## Author: Lyonthedragon
 ## Version: @project-version@
 ## SavedVariables: OldschoolUIDB
 ## X-Category: User Interface

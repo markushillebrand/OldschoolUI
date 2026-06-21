@@ -1,6 +1,6 @@
 ## Interface: 50504
 ## Title: OldschoolUI Minimap
-## Author: Markus
+## Author: Lyonthedragon
 ## Version: @project-version@
 ## Notes: Minimap shape, button bin and info elements.
 ## Dependencies: OldschoolUI

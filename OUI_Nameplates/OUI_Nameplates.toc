@@ -1,13 +1,15 @@
 ## Interface: 50504
 ## Title: OldschoolUI Nameplates
-## Author: Markus
+## Author: Lyonthedragon
 ## Version: @project-version@
-## Notes: Clean, lightweight nameplates with extensive customization.
+## Notes: Clean, lightweight nameplates (clean-room rewrite, phase NP-5).
 ## Dependencies: OldschoolUI
 ## SavedVariables: OldschoolUINameplatesDB
 
-OldschoolUINameplates.lua
-OldschoolUINameplatesFriendly.lua
-OldschoolUINameplates_CastOverlay.lua
+OUI_Nameplates_Core.lua
+OUI_Nameplates_Cast.lua
+OUI_Nameplates_Auras.lua
+OUI_Nameplates_Friendly.lua
+OUI_Nameplates_Extras.lua
 
 OUI_Nameplates_Options.lua

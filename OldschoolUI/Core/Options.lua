@@ -127,8 +127,8 @@ end
 local function BuildPanel()
     if mainFrame then return end
     local f = CreateFrame("Frame", "OldschoolUIPanel", UIParent)
-    f:SetSize(720, 480); f:SetPoint("CENTER")
-    f:SetFrameStrata("HIGH"); f:EnableMouse(true); f:SetClampedToScreen(true)
+    f:SetSize(720, 620); f:SetPoint("CENTER")
+    f:SetFrameStrata("DIALOG"); f:EnableMouse(true); f:SetClampedToScreen(true)
     f:SetMovable(true)
     Tex(f, "BACKGROUND", INK[1], INK[2], INK[3], 0.98):SetAllPoints()
     Border(f, BRD2[1], BRD2[2], BRD2[3], 1)
@@ -300,5 +300,27 @@ OUI:RegisterModule("General", {
             get = function() return OUI.GetGlobalBorderSize() end,
             set = function(v) OUI.SetGlobalBorderSize(v) end,
         }))
+        page:AddRow(OUI.Widgets.Slider(page, {
+            label = "Class colour intensity (all modules)", min = 50, max = 150, step = 1,
+            tooltip = "Brightness multiplier applied to all class colours. Modules can override locally.",
+            get = function() return math.floor((OUI.GetColorIntensity() or 1) * 100 + 0.5) end,
+            set = function(v) OUI.SetColorIntensity(v / 100) end,
+        }))
+        for _, tok in ipairs(OUI.CLASS_TOKENS) do
+            local cname = (LOCALIZED_CLASS_NAMES_MALE and LOCALIZED_CLASS_NAMES_MALE[tok]) or tok
+            local prefix = (OUI.L and OUI.L("Class")) or "Class"
+            page:AddRow(OUI.Widgets.ColorSwatch(page, {
+                label = prefix .. ": " .. cname,
+                tooltip = "Override the colour for this class across the whole UI. Right-click the swatch is not reset; use the default Blizzard colour by clearing in a future reset.",
+                get = function()
+                    local c = OUI.db and OUI.db.global.classColors[tok]
+                    if c then return c.r or c[1], c.g or c[2], c.b or c[3] end
+                    local rc = RAID_CLASS_COLORS and RAID_CLASS_COLORS[tok]
+                    if rc then return rc.r, rc.g, rc.b end
+                    return 1, 1, 1
+                end,
+                set = function(r, g, b) OUI.SetClassColor(tok, r, g, b) end,
+            }))
+        end
     end,
 })

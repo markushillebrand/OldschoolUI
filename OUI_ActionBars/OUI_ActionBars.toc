@@ -1,6 +1,6 @@
 ## Interface: 50504
 ## Title: OldschoolUI Action Bars
-## Author: Markus
+## Author: Lyonthedragon
 ## Version: @project-version@
 ## Notes: Action bars -- bars, paging, flyout and visibility.
 ## Dependencies: OldschoolUI

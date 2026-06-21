@@ -27,10 +27,9 @@ local BAR_W = ns.BAR_W or 150
 -- plate:SetUnit() on every live plate, which re-applies the full appearance
 -- (bar size, texture, colors, name/cast text, auras) immediately. A few frame-
 -- geometry refreshers live outside that appearance path, so nudge them too.
-local _EXTRA = {
-    "RefreshHoverEffect", "ApplyAbsorbStyleAll", "RefreshHitboxSize",
-    "RefreshStackingBounds", "RefreshNameplateYOffset", "RefreshFriendlyNameOnlyOffset",
-}
+-- RefreshAllSettings() re-runs plate:SetUnit() on every live plate (core +
+-- auras + extras), which re-applies the full appearance immediately. Friendly
+-- plates are handled separately below.
 local function Apply()
     if ns.RefreshAllSettings then
         ns.RefreshAllSettings()
@@ -39,7 +38,6 @@ local function Apply()
             if ns[fn] then pcall(ns[fn]) end
         end
     end
-    for _, fn in ipairs(_EXTRA) do if ns[fn] then pcall(ns[fn]) end end
     -- Friendly plates live in their own table (ns.friendlyPlates) with a
     -- separate apply path that RefreshAllSettings does not touch. Re-evaluate
     -- the friendly system (handles show/hide + name-only mode) and re-style
@@ -122,6 +120,9 @@ local SLOT_VALUES = { top = "Top", bottom = "Bottom", left = "Left", right = "Ri
                       topleft = "Top Left", topright = "Top Right", none = "None" }
 local SLOT_ORDER  = { "top", "bottom", "left", "right", "topleft", "topright", "none" }
 
+local POS_VALUES = { LEFT = "Left", RIGHT = "Right", TOP = "Top" }
+local POS_ORDER  = { "LEFT", "RIGHT", "TOP" }
+
 OUI:RegisterModule("OUI_Nameplates", {
     category    = "Better UI Module", order = 20,
     title       = "Nameplates",
@@ -146,74 +147,57 @@ OUI:RegisterModule("OUI_Nameplates", {
         FloatSlider(page, "Background Opacity (%)", "bgAlpha", 0, 100, 5, 1.0,
             "Opacity of the health bar background.")
         Slider(page, "Nameplate Y Offset", "nameplateYOffset", -40, 40, 1, 0)
-        Slider(page, "Hitbox Width (%)", "hitboxScaleX", 50, 150, 5, 100)
-        Slider(page, "Hitbox Height (%)", "hitboxScaleY", 50, 150, 5, 100)
 
         ------------------------------------------------------------ ENEMY COLORS
         Header(page, "Enemy Colors")
         Color(page, "Hostile", "hostile")
         Color(page, "Neutral", "neutral")
         Color(page, "Tapped", "tapped")
-        Toggle(page, "Color Quest Mobs", "questMobColorEnabled",
-            "Tint nameplates of mobs tied to your active quests.")
-        Color(page, "Quest Mob Color", "questMobColor")
         Toggle(page, "Show Enemy Pets", "showEnemyPets")
 
         --------------------------------------------------------------- NAME TEXT
         Header(page, "Name Text")
         Slider(page, "Name Text Size", "enemyNameTextSize", 6, 24, 1, 11)
-        Slider(page, "Name Y Offset", "nameYOffset", -20, 20, 1, 0)
-        Toggle(page, "Show NPC Titles", "showNPCTitles")
 
         ----------------------------------------------------------------- CASTBAR
         Header(page, "Cast Bar")
-        Toggle(page, "Enable Cast Bar Overlay", "castOverlayEnabled")
         Slider(page, "Cast Bar Height", "castBarHeight", 6, 40, 1, 17)
-        Slider(page, "Cast Bar Scale (%)", "castScale", 50, 200, 5, 100)
         Toggle(page, "Show Cast Icon", "showCastIcon")
-        FloatSlider(page, "Cast Icon Scale (%)", "castIconScale", 50, 200, 5, 1.0,
-            "Stored as a multiplier; shown here as a percentage.")
         Toggle(page, "Show Cast Timer", "showCastTimer")
         Slider(page, "Cast Name Size", "castNameSize", 6, 20, 1, 10)
         Color(page, "Cast Bar Color", "castBar")
         Color(page, "Uninterruptible Color", "castBarUninterruptible")
-        Color(page, "Cast Name Color", "castNameColor")
 
         ------------------------------------------------------------------- AURAS
         Header(page, "Auras")
         Toggle(page, "Show All Debuffs", "showAllDebuffs",
             "Show all debuffs rather than only your own.")
-        Slider(page, "Max Debuffs", "maxDebuffs", 1, 12, 1, 6)
+        Slider(page, "Max Debuffs", "maxDebuffs", 1, 12, 1, 5)
+        Slider(page, "Max Buffs", "maxBuffs", 1, 10, 1, 4)
+        Slider(page, "Max CC", "maxCC", 1, 8, 1, 3)
         Slider(page, "Debuff Icon Size", "debuffIconSize", 12, 48, 1, 26)
         Slider(page, "Buff Icon Size", "buffIconSize", 12, 48, 1, 24)
         Slider(page, "CC Icon Size", "ccIconSize", 12, 48, 1, 24)
         Dropdown(page, "Debuff Position", "debuffSlot", SLOT_VALUES, SLOT_ORDER, "top")
         Dropdown(page, "Buff Position", "buffSlot", SLOT_VALUES, SLOT_ORDER, "left")
         Dropdown(page, "CC Position", "ccSlot", SLOT_VALUES, SLOT_ORDER, "right")
+        Slider(page, "Aura Spacing", "auraSpacing", 0, 10, 1, 2)
         Slider(page, "Aura Duration Text Size", "auraDurationTextSize", 6, 20, 1, 11)
         Slider(page, "Aura Stack Text Size", "auraStackTextSize", 6, 20, 1, 11)
 
         --------------------------------------------------------- TARGET & FOCUS
         Header(page, "Target & Focus")
-        Slider(page, "Target Scale (%)", "targetScale", 80, 160, 5, 100)
-        Toggle(page, "Show Target Arrows", "showTargetArrows")
-        FloatSlider(page, "Target Arrow Scale (%)", "targetArrowScale", 50, 200, 5, 1.0,
-            "Stored as a multiplier; shown here as a percentage.")
-        Toggle(page, "Double Target Arrows", "targetArrowDouble")
-        Toggle(page, "Class-Color Target Arrows", "targetArrowClassColor")
-        Color(page, "Target Arrow Color", "targetArrowColor")
-        Toggle(page, "Target Overlay", "targetColorEnabled")
-        Color(page, "Target Overlay Color", "targetOverlayColor")
-        FloatSlider(page, "Target Overlay Opacity (%)", "targetOverlayAlpha", 0, 100, 5, 0.4)
-        Toggle(page, "Focus Overlay", "focusColorEnabled")
-        Color(page, "Focus Overlay Color", "focusOverlayColor")
-        FloatSlider(page, "Focus Overlay Opacity (%)", "focusOverlayAlpha", 0, 100, 5, 0.4)
+        Toggle(page, "Target Color", "targetColorEnabled",
+            "Tint your current target's nameplate.")
+        Color(page, "Target Color", "target")
+        Toggle(page, "Focus Color", "focusColorEnabled",
+            "Tint your focus target's nameplate.")
+        Color(page, "Focus Color", "focus")
 
         ------------------------------------------------------------------ THREAT
         Header(page, "Threat")
         Toggle(page, "Tank Threat Coloring", "tankHasAggroEnabled",
             "Color enemy nameplates by your threat as a tank.")
-        Toggle(page, "Classic Tank Mode", "classicTankAggro")
         Color(page, "Tank: Has Aggro", "tankHasAggro")
         Color(page, "Tank: Losing Aggro", "tankLosingAggro")
         Color(page, "Tank: No Aggro", "tankNoAggro")
@@ -226,23 +210,22 @@ OUI:RegisterModule("OUI_Nameplates", {
         Toggle(page, "Name Only (Friendly Players)", "friendlyNameOnly")
         Toggle(page, "Class-Color Friendly Players", "classColorFriendly")
         Toggle(page, "Show Friendly NPCs", "showFriendlyNPCs")
-        Slider(page, "Friendly Bar Width", "friendlyHealthBarWidth", 20, 240, 2, 150)
-        Slider(page, "Friendly Bar Height", "friendlyHealthBarHeight", 4, 40, 1, 10)
+        Slider(page, "Friendly Bar Width", "friendlyHealthBarWidth", 20, 240, 2, 110)
+        Slider(page, "Friendly Bar Height", "friendlyHealthBarHeight", 4, 40, 1, 8)
         Color(page, "Friendly Bar Color", "friendlyBarColor")
-        Slider(page, "Friendly Plate Y Offset", "friendlyPlateYOffset", -40, 40, 1, 0)
+        Slider(page, "Friendly Name Y Offset", "friendlyNameOnlyYOffset", -40, 40, 1, -8)
 
-        ----------------------------------------------------------- GLOWS & EXTRAS
-        Header(page, "Glows & Extras")
+        ------------------------------------------------------------------ EXTRAS
+        Header(page, "Extras")
+        Toggle(page, "Show Raid Marker", "showRaidMarker")
+        Slider(page, "Raid Marker Size", "raidMarkerSize", 8, 48, 1, 22)
+        Dropdown(page, "Raid Marker Position", "raidMarkerPos", POS_VALUES, POS_ORDER, "LEFT")
+        Toggle(page, "Show Level", "showLevel")
+        Slider(page, "Level Text Size", "levelTextSize", 6, 20, 1, 10)
+        Toggle(page, "Show Absorb Shield", "showAbsorb")
+        Color(page, "Absorb Color", "absorbColor")
         Toggle(page, "Pandemic Glow", "pandemicGlow",
             "Glow your debuffs while they are in the pandemic (refresh) window.")
         Color(page, "Pandemic Glow Color", "pandemicGlowColor")
-        Toggle(page, "Dispellable Aura Glow", "dispelGlow")
-        Color(page, "Dispel Glow Color", "dispelGlowColor")
-        Toggle(page, "Important Cast Glow", "importantCastGlow")
-        Color(page, "Important Cast Glow Color", "importantCastGlowColor")
-        Toggle(page, "Execute Hash Line", "hashLineEnabled",
-            "Draw a marker line on the health bar at a low-health threshold.")
-        Slider(page, "Hash Line Threshold (%)", "hashLinePercent", 5, 50, 1, 30)
-        Toggle(page, "Interrupt Tick Marker", "kickTickEnabled")
     end,
 })

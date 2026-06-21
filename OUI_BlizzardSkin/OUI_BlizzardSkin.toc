@@ -1,0 +1,11 @@
+## Interface: 50504
+## Title: OldschoolUI Blizzard Skin
+## Author: Lyonthedragon
+## Version: @project-version@
+## Notes: Themed reskin of stock Blizzard frames (tooltips, menus, popups).
+## Dependencies: OldschoolUI
+## SavedVariables: OldschoolUIBlizzardSkinDB
+
+OUI_BlizzardSkin.lua
+OUI_BlizzardSkin_CharacterSheet.lua
+OUI_BlizzardSkin_Options.lua

@@ -109,3 +109,24 @@ end
 
 SLASH_OLDSCHOOLUIMOVE1 = "/ouimove"
 SlashCmdList["OLDSCHOOLUIMOVE"] = function() OUI:ToggleUnlock() end
+
+-- Re-assert every registered element's saved position. Some Blizzard frames
+-- (minimap cluster, bag bar, ...) are repositioned by Blizzard's own layout
+-- pass late in login, after our modules first place them -- this puts them back.
+function OUI:ReapplyMoverPositions()
+    if OUI._unlockActive or InCombatLockdown() then return end
+    for _, el in ipairs(elements) do
+        if el.applyPos then pcall(el.applyPos) end
+    end
+end
+
+local moverLogin = CreateFrame("Frame")
+moverLogin:RegisterEvent("PLAYER_ENTERING_WORLD")
+moverLogin:SetScript("OnEvent", function()
+    if C_Timer and C_Timer.After then
+        C_Timer.After(0.5, function() OUI:ReapplyMoverPositions() end)
+        C_Timer.After(2.0, function() OUI:ReapplyMoverPositions() end)
+    else
+        OUI:ReapplyMoverPositions()
+    end
+end)

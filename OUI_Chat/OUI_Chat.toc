@@ -1,0 +1,16 @@
+## Interface: 50504
+## Title: OldschoolUI Chat
+## Author: Lyonthedragon
+## Version: @project-version@
+## Notes: Chat skinning and utilities (clean-room rewrite, phase CH-4).
+## Dependencies: OldschoolUI
+## SavedVariables: OldschoolUIChatDB
+## SavedVariablesPerCharacter: OldschoolUIChatScrollDB
+
+OUI_Chat_Core.lua
+OUI_Chat_Fade.lua
+OUI_Chat_Copy.lua
+OUI_Chat_History.lua
+OUI_Chat_Sidebar.lua
+
+OUI_Chat_Options.lua

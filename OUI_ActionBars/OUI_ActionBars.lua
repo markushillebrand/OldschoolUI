@@ -169,12 +169,27 @@ end
 function AB:ApplyBar(key)
     local bar = BY_KEY[key]
     if not bar then return end
+    -- the container holds reparented secure buttons, so SetSize/SetPoint/Show on
+    -- it are protected in combat; defer the whole apply to PLAYER_REGEN_ENABLED.
+    if InCombatLockdown() then self._needLayout = true; return end
     local cfg = self.db.profile.bars[key]
+    if not bar.aux then self:SyncBlizzardBarToggles() end
     local f = self:BuildContainer(bar)
 
     local w, h = ns.GridDims(bar, cfg)
-    f:SetSize(w, h)
-    f:SetScale(cfg.scale or 1.0)
+    local scale = cfg.scale or 1.0
+    if bar.aux then
+        -- aux buttons are reparented onto f, so scaling f scales them.
+        f:SetSize(w, h)
+        f:SetScale(scale)
+    else
+        -- non-aux buttons keep their Blizzard parent (not children of f), so
+        -- scaling f would only move them. We scale each button directly in
+        -- LayoutBar; f stays at scale 1 but is sized to the scaled grid so the
+        -- CENTER anchor keeps the bar centred.
+        f:SetScale(1)
+        f:SetSize(w * scale, h * scale)
+    end
 
     f:ClearAllPoints()
     local x = cfg.x or 0
@@ -184,15 +199,39 @@ function AB:ApplyBar(key)
     if cfg.enabled then
         self:LayoutBar(bar, cfg)
         self:SuppressBlizzBar(bar)
-        self:SetupVisibility(f, true, bar.visRule)
+        -- Aux bars (reparented onto our container) still need our secure driver to
+        -- hide during pet battle/vehicle. Non-aux bars keep their Blizzard parent,
+        -- which Blizzard itself hides in those states, so the buttons follow.
+        if bar.aux then self:SetupVisibility(f, true, bar.visRule) end
         f:Show()
     else
-        self:SetupVisibility(f, false)
+        if bar.aux then self:SetupVisibility(f, false) end
+        self:SetBarAlpha(bar, 0)
         f:Hide()
     end
 end
 
+-- MoP only exposes Blizzard toggles for MultiBarBottomLeft/BottomRight/Right/Left
+-- (our Bar2..Bar5). Their native buttons only carry actions when the bar is
+-- toggled on, so mirror our per-bar enabled flags onto Blizzard's account setting
+-- (otherwise enabling a bar in our options would show empty/inactive buttons).
+function AB:SyncBlizzardBarToggles()
+    if InCombatLockdown() then self._needLayout = true; return end
+    if not (SetActionBarToggles and GetActionBarToggles) then return end
+    local b = self.db.profile.bars
+    local function on(k) return (b[k] and b[k].enabled) and true or false end
+    local w1, w2, w3, w4 = on("Bar2"), on("Bar3"), on("Bar4"), on("Bar5")
+    local c1, c2, c3, c4 = GetActionBarToggles()
+    if (w1 and true or false) ~= (c1 and true or false)
+        or (w2 and true or false) ~= (c2 and true or false)
+        or (w3 and true or false) ~= (c3 and true or false)
+        or (w4 and true or false) ~= (c4 and true or false) then
+        SetActionBarToggles(w1, w2, w3, w4)
+    end
+end
+
 function AB:ApplyAll()
+    self:SyncBlizzardBarToggles()
     for _, bar in ipairs(BARS) do self:ApplyBar(bar.key) end
 end
 
@@ -303,10 +342,28 @@ function AB:SkinButton(btn, shape)
         pcall(btn.cooldown.SetUseCircularEdge, btn.cooldown, shape == "round")
     end
 
-    -- border: rectangular Core border for square/rounded; round gets none for
-    -- now (a matching round border comes in a later polish pass).
+    -- border:
+    --   square / rounded -> rectangular Core border
+    --   round            -> circular ring overlay (covers the square slot edges
+    --                       that otherwise show behind the round icon mask)
+    local ACC = OUI.ACCENT or { r = 0.85, g = 0.64, b = 0.25 }
+    if not btn._ouiRoundBorder then
+        local rb = btn:CreateTexture(nil, "OVERLAY", nil, 1)
+        rb:SetPoint("TOPLEFT", btn, "TOPLEFT", -1, 1)
+        rb:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", 1, -1)
+        rb:SetTexture(MASK .. "roundring.tga")
+        rb:Hide()
+        btn._ouiRoundBorder = rb
+    end
     if OUI.PP and OUI.PP.CreateBorder then OUI.PP.CreateBorder(btn, 0, 0, 0, 0.9) end
-    if OUI.PP and OUI.PP.SetBorderSize then OUI.PP.SetBorderSize(btn, shape == "round" and 0 or 1) end
+    if shape == "round" then
+        if OUI.PP and OUI.PP.SetBorderSize then OUI.PP.SetBorderSize(btn, 0) end
+        btn._ouiRoundBorder:SetVertexColor(ACC.r, ACC.g, ACC.b, 1)
+        btn._ouiRoundBorder:Show()
+    else
+        if OUI.PP and OUI.PP.SetBorderSize then OUI.PP.SetBorderSize(btn, 1) end
+        btn._ouiRoundBorder:Hide()
+    end
 end
 
 -- re-hide art Blizzard may have re-applied (cheap, runs in the state driver)
@@ -334,18 +391,30 @@ function AB:ColorButton(btn)
     else icon:SetVertexColor(1, 1, 1) end
 end
 
--- reparent the bar's native buttons onto our container in anchor-grid order
+-- Position the bar's native buttons into our grid. Non-aux bars keep their
+-- secure Blizzard parent (so native drag/click placement -- including into EMPTY
+-- slots -- keeps working); we only re-anchor them to our container. Aux bars
+-- (stance/pet) are still reparented onto our container as before.
 function AB:LayoutBar(bar, cfg)
     if InCombatLockdown() then self._needLayout = true; return end
     local f = self:BuildContainer(bar)
     local size = self.db.profile.buttonSize
     local shape = self.db.profile.buttonShape
+    local scale = cfg.scale or 1.0
     self.skinned = self.skinned or {}
     for i = 1, bar.count do
         local btn = _G[bar.btnPrefix .. i]
         if btn then
-            if bar.aux then self:PrepAuxButton(btn, bar.aux) end
-            btn:SetParent(f)
+            if bar.aux then
+                self:PrepAuxButton(btn, bar.aux)
+                btn:SetParent(f)                 -- aux only
+            else
+                -- non-aux buttons aren't children of f; scale each one directly
+                -- so the slider resizes (not just moves) the bar. Anchor offsets
+                -- below are in the button's own (scaled) space, so spacing scales
+                -- with it and the grid stays consistent.
+                if btn.SetScale then btn:SetScale(scale) end
+            end
             btn:ClearAllPoints()
             local cx, ry = ns.GridButtonOffset(bar, cfg, i)
             btn:SetPoint("TOPLEFT", f, "TOPLEFT", cx, ry)
@@ -460,12 +529,32 @@ function AB:SuppressBlizzBar(bar)
         self:SetupAuxRelayout(bar)
         return
     end
-    if not frame or frame._ouiSuppressed then return end
-    frame._ouiSuppressed = true
-    if frame.UnregisterAllEvents and bar.key ~= "MainBar" then frame:UnregisterAllEvents() end
-    local hide = frame.HideBase or frame.Hide
-    pcall(hide, frame)
-    if frame.HookScript then frame:HookScript("OnShow", function(s) s:Hide() end) end
+    if not frame then return end
+    -- Park the Blizzard bar off-screen (its own art goes with it) but DO NOT hide
+    -- it: its action buttons stay parented to it (secure), and we re-anchor them
+    -- into our grid. Hidden parent would hide the buttons; parking keeps them
+    -- shown while their art is gone.
+    frame.ignoreFramePositionManager = true
+    -- keep the parked frame at scale 1: its buttons (children) must not inherit
+    -- a scale, because we scale each button explicitly in LayoutBar.
+    if frame.SetScale then frame:SetScale(1) end
+    local function park()
+        if InCombatLockdown() then AB._needLayout = true; return end
+        frame:ClearAllPoints()
+        frame:SetPoint("TOPRIGHT", UIParent, "BOTTOMLEFT", -2000, -2000)
+    end
+    park()
+    if not frame._ouiParked then
+        frame._ouiParked = true
+        if frame.HookScript then
+            frame:HookScript("OnShow", function()
+                park()
+                -- Blizzard may re-anchor its buttons when it re-shows the bar
+                -- (e.g. after a pet battle); pull them back into our grid.
+                if not InCombatLockdown() then AB:LayoutBar(bar, AB.db.profile.bars[bar.key]) end
+            end)
+        end
+    end
 end
 
 function AB:SetupStateDriver()
@@ -792,6 +881,21 @@ end
 
 -- per-bar visibility as an alpha layer (the AB3 state driver still hard-hides
 -- for vehicle/petbattle). Modes: always | combat | ooc | mouseover | never.
+-- Apply an alpha to a bar's visible buttons. Non-aux buttons keep their Blizzard
+-- parent (not our container), so fading the container wouldn't touch them; we set
+-- the buttons' alpha directly (SetAlpha is allowed in combat). Aux buttons are
+-- children of our container, so its alpha already covers them.
+function AB:SetBarAlpha(bar, a)
+    if bar.aux then
+        local f = self.frames[bar.key]; if f then f:SetAlpha(a) end
+        return
+    end
+    for i = 1, bar.count do
+        local b = _G[bar.btnPrefix .. i]
+        if b then b:SetAlpha(a) end
+    end
+end
+
 function AB:UpdateVisibility()
     local p = self.db.profile
     local inC = (UnitAffectingCombat and UnitAffectingCombat("player")) or false
@@ -806,7 +910,7 @@ function AB:UpdateVisibility()
             elseif mode == "ooc" then a = inC and faded or 1
             elseif mode == "mouseover" then a = (MouseIsOver(f) or inC) and 1 or faded
             elseif mode == "never" then a = 0 end
-            f:SetAlpha(a)
+            self:SetBarAlpha(bar, a)
         end
     end
 end

@@ -1,6 +1,6 @@
 ## Interface: 50504
 ## Title: OldschoolUI Loot Roll
-## Author: Markus
+## Author: Lyonthedragon
 ## Version: @project-version@
 ## Notes: Custom group loot roll bars with countdown, roll tally, disenchant, and a mover.
 ## Dependencies: OldschoolUI

@@ -1,0 +1,11 @@
+## Interface: 50504
+## Title: OldschoolUI Friends
+## Author: Lyonthedragon
+## Version: @project-version@
+## Notes: A clean friends list with organization tools (clean-room rewrite, phase FR-4).
+## Dependencies: OldschoolUI
+## SavedVariables: OldschoolUIFriendsDB
+
+OUI_Friends.lua
+
+OUI_Friends_Options.lua

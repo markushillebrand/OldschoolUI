@@ -21,13 +21,22 @@ local WHITE = "Interface\\Buttons\\WHITE8X8"
 --  Unit model. defX/defY are starting positions relative to the screen centre.
 -- ---------------------------------------------------------------------------
 local UNITS = {
-    { key = "player",       unit = "player",       label = "Player",            w = 181, h = 46, power = 6, defX = -260, defY = -180, cast = true },
-    { key = "target",       unit = "target",       label = "Target",            w = 181, h = 46, power = 6, defX =  260, defY = -180, targetChange = true, cast = true },
-    { key = "focus",        unit = "focus",        label = "Focus",             w = 181, h = 46, power = 6, defX = -430, defY = -110, focusChange = true, cast = true },
-    { key = "pet",          unit = "pet",          label = "Pet",               w = 101, h = 25, power = 6, defX = -260, defY = -232, cast = true },
+    { key = "player",       unit = "player",       label = "Player",            w = 181, h = 46, power = 6, defX = -260, defY = -180, cast = true, threat = true, auras = true, portrait = true },
+    { key = "target",       unit = "target",       label = "Target",            w = 181, h = 46, power = 6, defX =  260, defY = -180, targetChange = true, cast = true, threat = true, auras = true, portrait = true },
+    { key = "focus",        unit = "focus",        label = "Focus",             w = 181, h = 46, power = 6, defX = -430, defY = -110, focusChange = true, cast = true, threat = true, auras = true, portrait = true },
+    { key = "pet",          unit = "pet",          label = "Pet",               w = 101, h = 25, power = 6, defX = -260, defY = -232, cast = true, threat = true, auras = true, portrait = true },
     { key = "targettarget", unit = "targettarget", label = "Target of Target",  w = 101, h = 25, power = 0, defX =  430, defY = -110, poll = true },
     { key = "focustarget",  unit = "focustarget",  label = "Focus Target",      w = 101, h = 25, power = 0, defX = -430, defY = -158, poll = true },
 }
+
+-- boss1-5: own movable frames, stacked on the right by default, auto show/hide
+for i = 1, 5 do
+    UNITS[#UNITS + 1] = {
+        key = "boss" .. i, unit = "boss" .. i, label = "Boss " .. i,
+        w = 160, h = 34, power = 6, defX = 420, defY = 150 - (i - 1) * 52,
+        cast = true, threat = true, auras = true, portrait = true, boss = true,
+    }
+end
 ns.UNITS = UNITS
 
 local UNIT_BY_KEY = {}
@@ -52,6 +61,23 @@ local function defaultUnits()
             powerText    = "none",
             showCast     = true,
             castHeight   = 14,
+            showRaidIcon = true,
+            showThreat   = true,
+            rangeFade    = false,
+            fadeAlpha    = 0.45,
+            showBuffs    = true,
+            showDebuffs  = true,
+            auraSize     = 22,
+            auraPerRow   = 8,
+            auraRows     = 1,
+            auraGrow     = "DOWN",   -- DOWN | UP
+            auraShowCount = true,
+            hideAuraTime = false,
+            auraAnchor   = "BELOW",  -- BELOW | ABOVE
+            auraOffset   = 4,
+            portraitSize = 0,        -- 0 = off
+            portraitSide = "LEFT",   -- LEFT | RIGHT
+            portrait3D   = false,
         }
     end
     return t
@@ -60,6 +86,7 @@ end
 local defaults = {
     profile = {
         units = defaultUnits(),
+        hideBlizzard = true,
     },
 }
 
@@ -118,6 +145,35 @@ local function CastOnUpdate(self)
 end
 
 -- ---------------------------------------------------------------------------
+--  Aura helpers. Prefer the modern C_UnitAuras API, fall back to UnitAura.
+--  Returns a normalised tuple: name, icon, count, debuffType, duration, expiration.
+-- ---------------------------------------------------------------------------
+local function GetAura(unit, index, filter)
+    if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+        local d = C_UnitAuras.GetAuraDataByIndex(unit, index, filter)
+        if not d then return nil end
+        return d.name, d.icon, d.applications, d.dispelName, d.duration, d.expirationTime
+    end
+    if UnitAura then
+        local name, icon, count, dtype, duration, expiration = UnitAura(unit, index, filter)
+        return name, icon, count, dtype, duration, expiration
+    end
+end
+
+local function MakeAuraIcon(parent, font)
+    local b = CreateFrame("Frame", nil, parent)
+    b.icon = b:CreateTexture(nil, "ARTWORK")
+    b.icon:SetAllPoints(b); b.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    b.cd = CreateFrame("Cooldown", nil, b, "CooldownFrameTemplate")
+    b.cd:SetAllPoints(b); b.cd:SetDrawEdge(false)
+    b.count = b:CreateFontString(nil, "OVERLAY")
+    b.count:SetFont(font, 10, "OUTLINE")
+    b.count:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", 1, 0)
+    if OUI.PP and OUI.PP.CreateBorder then OUI.PP.CreateBorder(b, 0, 0, 0, 0.9) end
+    return b
+end
+
+-- ---------------------------------------------------------------------------
 --  Updates
 -- ---------------------------------------------------------------------------
 function UF:UpdateHealth(f)
@@ -152,11 +208,144 @@ function UF:UpdateName(f)
     f.nameText:SetText(UnitExists(u) and (UnitName(u) or "") or "")
 end
 
+function UF:UpdateRaidTarget(f)
+    if not f.raidIcon then return end
+    local cfg = self.db.profile.units[f.unitKey]
+    local idx = (cfg.showRaidIcon ~= false) and UnitExists(f.unit) and GetRaidTargetIndex(f.unit) or nil
+    if idx and SetRaidTargetIconTexture then
+        SetRaidTargetIconTexture(f.raidIcon, idx)
+        f.raidIcon:Show()
+    else
+        f.raidIcon:Hide()
+    end
+end
+
+-- the threat status that matters for this frame: for target/focus it's whether
+-- the PLAYER holds aggro on that unit; for player/pet it's their own status.
+local function ThreatStatus(key, unit)
+    if key == "target" or key == "focus" then
+        return UnitThreatSituation("player", unit)
+    end
+    return UnitThreatSituation(unit)
+end
+
+function UF:UpdateThreat(f)
+    if not (f._threat and OUI.PP and OUI.PP.SetBorderColor) then return end
+    local cfg = self.db.profile.units[f.unitKey]
+    local status = (cfg.showThreat ~= false) and UnitExists(f.unit) and ThreatStatus(f.unitKey, f.unit) or nil
+    if status and status > 0 then
+        local r, g, b = GetThreatStatusColor(status)
+        OUI.PP.SetBorderColor(f, r, g, b, 1)
+    else
+        OUI.PP.SetBorderColor(f, 0, 0, 0, 0.9)
+    end
+end
+
+function UF:UpdateAuras(f, group)
+    if not group then return end
+    local cfg = self.db.profile.units[f.unitKey]
+    local on  = (group.filter == "HELPFUL") and cfg.showBuffs or cfg.showDebuffs
+    if not on or not UnitExists(f.unit) then
+        for _, b in ipairs(group.pool) do b:Hide() end
+        group:Hide(); return 0
+    end
+    group:Show()
+    local size = cfg.auraSize or 22
+    local per  = cfg.auraPerRow or 8
+    local max  = per * (cfg.auraRows or 1)
+    local font = self._font or STANDARD_TEXT_FONT
+    local shown, i = 0, 1
+    local above = (cfg.auraAnchor == "ABOVE")
+    while shown < max do
+        local name, icon, count, dtype, duration, expiration = GetAura(f.unit, i, group.filter)
+        if not name then break end
+        shown = shown + 1
+        local b = group.pool[shown]
+        if not b then b = MakeAuraIcon(group, font); group.pool[shown] = b end
+        b:SetSize(size, size)
+        b.icon:SetTexture(icon)
+        if cfg.auraShowCount ~= false and count and count > 1 then
+            b.count:SetFont(font, math.max(7, math.floor(size * 0.42)), "OUTLINE")
+            b.count:SetText(count); b.count:Show()
+        else
+            b.count:SetText(""); b.count:Hide()
+        end
+        if duration and duration > 0 and expiration and expiration > 0 then
+            b.cd:SetCooldown(expiration - duration, duration); b.cd:Show()
+            if b.cd.SetHideCountdownNumbers then
+                b.cd:SetHideCountdownNumbers(cfg.hideAuraTime and true or false)
+            end
+        else
+            b.cd:Hide()
+        end
+        if group.filter == "HARMFUL" and OUI.PP and OUI.PP.SetBorderColor then
+            local c = DebuffTypeColor and DebuffTypeColor[dtype or "none"]
+            if c then OUI.PP.SetBorderColor(b, c.r, c.g, c.b, 1)
+            else OUI.PP.SetBorderColor(b, 0, 0, 0, 0.9) end
+        end
+        local col = (shown - 1) % per
+        local row = math.floor((shown - 1) / per)
+        b:ClearAllPoints()
+        if above then
+            b:SetPoint("BOTTOMLEFT", group, "BOTTOMLEFT", col * (size + 2), row * (size + 2))
+        else
+            b:SetPoint("TOPLEFT", group, "TOPLEFT", col * (size + 2), -row * (size + 2))
+        end
+        b:Show()
+        i = i + 1
+    end
+    for j = shown + 1, #group.pool do group.pool[j]:Hide() end
+    return math.ceil(shown / per)
+end
+
+-- update both aura groups and anchor them to the actual rows used, so an empty
+-- debuff row never pushes the buff row down.
+function UF:LayoutAuras(f)
+    if not f.debuffs then return end
+    local cfg  = self.db.profile.units[f.unitKey]
+    local size = cfg.auraSize or 22
+    local off  = cfg.auraOffset or 4
+    local dRows = self:UpdateAuras(f, f.debuffs)
+    self:UpdateAuras(f, f.buffs)
+    local dH = dRows * (size + 2)
+    f.debuffs:ClearAllPoints(); f.buffs:ClearAllPoints()
+    if cfg.auraAnchor == "ABOVE" then
+        f.debuffs:SetPoint("BOTTOMLEFT", f, "TOPLEFT", 0, off)
+        f.buffs:SetPoint("BOTTOMLEFT", f, "TOPLEFT", 0, off + (dRows > 0 and (dH + 4) or 0))
+    else
+        f.debuffs:SetPoint("TOPLEFT", f, "BOTTOMLEFT", 0, -off)
+        f.buffs:SetPoint("TOPLEFT", f, "BOTTOMLEFT", 0, -off - (dRows > 0 and (dH + 4) or 0))
+    end
+end
+
+function UF:UpdatePortrait(f)
+    if not f.portrait then return end
+    local cfg = self.db.profile.units[f.unitKey]
+    if (cfg.portraitSize or 0) > 0 and UnitExists(f.unit) then
+        local p = f.portrait
+        if cfg.portrait3D and p.model.SetUnit then
+            p.model:SetUnit(f.unit)
+            if p.model.SetPortraitZoom then p.model:SetPortraitZoom(1) end
+            p.model:Show(); p.tex:Hide()
+        else
+            SetPortraitTexture(p.tex, f.unit)
+            p.tex:Show(); p.model:Hide()
+        end
+        p:Show()
+    else
+        f.portrait:Hide()
+    end
+end
+
 function UF:UpdateAll(f)
     if not UnitExists(f.unit) then return end
     self:UpdateHealth(f)
     self:UpdatePower(f)
     self:UpdateName(f)
+    self:UpdateRaidTarget(f)
+    self:UpdateThreat(f)
+    self:UpdatePortrait(f)
+    if f.debuffs then self:LayoutAuras(f) end
     if f.castbar then self:RefreshCast(f) end
 end
 
@@ -252,6 +441,33 @@ function UF:BuildUnit(info)
 
     if OUI.PP and OUI.PP.CreateBorder then OUI.PP.CreateBorder(f, 0, 0, 0, 0.9) end
 
+    -- raid target marker (skull / cross / ...): top-centre of the health bar
+    f.raidIcon = hb:CreateTexture(nil, "OVERLAY")
+    f.raidIcon:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcons")
+    f.raidIcon:SetSize(16, 16)
+    f.raidIcon:SetPoint("TOP", hb, "TOP", 0, 8)
+    f.raidIcon:Hide()
+    f._threat = info.threat and true or false
+
+    -- portrait (2D), shown to the left of the frame when sized > 0
+    if info.portrait then
+        local p = CreateFrame("Frame", nil, f)
+        p.tex = p:CreateTexture(nil, "ARTWORK")
+        p.tex:SetAllPoints(p); p.tex:SetTexCoord(0.1, 0.9, 0.1, 0.9)
+        p.model = CreateFrame("PlayerModel", nil, p)
+        p.model:SetAllPoints(p)
+        p.model:Hide()
+        if OUI.PP and OUI.PP.CreateBorder then OUI.PP.CreateBorder(p, 0, 0, 0, 0.9) end
+        p:Hide()
+        f.portrait = p
+    end
+
+    -- aura groups (buffs + debuffs): plain anchor frames holding icon pools
+    if info.auras then
+        f.debuffs = CreateFrame("Frame", nil, f); f.debuffs.filter = "HARMFUL"; f.debuffs.pool = {}
+        f.buffs   = CreateFrame("Frame", nil, f); f.buffs.filter   = "HELPFUL"; f.buffs.pool   = {}
+    end
+
     -- cast bar (optional) -- a child below the frame, shown only while casting
     if info.cast then
         local cb = CreateFrame("StatusBar", nil, f)
@@ -290,6 +506,14 @@ function UF:BuildUnit(info)
         elseif event == "UNIT_SPELLCAST_STOP" or event == "UNIT_SPELLCAST_CHANNEL_STOP"
             or event == "UNIT_SPELLCAST_INTERRUPTED" or event == "UNIT_SPELLCAST_FAILED" then
             UF:MaybeStopCast(self2)
+        elseif event == "UNIT_PORTRAIT_UPDATE" or event == "UNIT_MODEL_CHANGED" then
+            UF:UpdatePortrait(self2)
+        elseif event == "UNIT_AURA" then
+            if self2.debuffs then UF:LayoutAuras(self2) end
+        elseif event == "RAID_TARGET_UPDATE" then
+            UF:UpdateRaidTarget(self2)
+        elseif event == "UNIT_THREAT_SITUATION_UPDATE" or event == "UNIT_THREAT_LIST_UPDATE" then
+            UF:UpdateThreat(self2)
         else
             UF:UpdateAll(self2)
         end
@@ -303,6 +527,17 @@ function UF:BuildUnit(info)
         f:RegisterUnitEvent("UNIT_DISPLAYPOWER", info.unit)
     end
     f:RegisterEvent("PLAYER_ENTERING_WORLD")
+    f:RegisterEvent("RAID_TARGET_UPDATE")
+    if info.threat then
+        f:RegisterEvent("UNIT_THREAT_SITUATION_UPDATE")
+        f:RegisterEvent("UNIT_THREAT_LIST_UPDATE")
+    end
+    if info.auras then f:RegisterUnitEvent("UNIT_AURA", info.unit) end
+    if info.portrait then
+        f:RegisterUnitEvent("UNIT_PORTRAIT_UPDATE", info.unit)
+        f:RegisterUnitEvent("UNIT_MODEL_CHANGED", info.unit)
+    end
+    if info.boss then f:RegisterEvent("INSTANCE_ENCOUNTER_ENGAGE_UNIT") end
     if info.targetChange then f:RegisterEvent("PLAYER_TARGET_CHANGED") end
     if info.focusChange  then f:RegisterEvent("PLAYER_FOCUS_CHANGED")  end
     if info.key == "pet" then f:RegisterEvent("UNIT_PET") end
@@ -336,6 +571,14 @@ end
 function UF:ApplyUnit(key)
     local info = UNIT_BY_KEY[key]
     if not info then return end
+    -- The unit frame is a SecureUnitButtonTemplate with RegisterUnitWatch, so
+    -- building it (SetAttribute) and laying it out (SetSize/SetPoint/Show/
+    -- Register/UnregisterUnitWatch) are all protected in combat. Defer to
+    -- PLAYER_REGEN_ENABLED if we're locked down.
+    if InCombatLockdown() then
+        self._needApply = true
+        return
+    end
     local cfg = self.db.profile.units[key]
     local f = self:BuildUnit(info)
 
@@ -377,6 +620,23 @@ function UF:ApplyUnit(key)
         f:Hide()
     end
 
+    if not cfg.rangeFade then f:SetAlpha(1) end
+
+    if f.portrait then
+        local ps = cfg.portraitSize or 0
+        if ps > 0 then
+            f.portrait:SetSize(ps, ps)
+            f.portrait:ClearAllPoints()
+            if cfg.portraitSide == "RIGHT" then
+                f.portrait:SetPoint("LEFT", f, "RIGHT", 3, 0)
+            else
+                f.portrait:SetPoint("RIGHT", f, "LEFT", -3, 0)
+            end
+        else
+            f.portrait:Hide()
+        end
+    end
+
     if f.castbar then
         local ch = cfg.castHeight or 14
         f.castbar:ClearAllPoints()
@@ -388,10 +648,68 @@ function UF:ApplyUnit(key)
         f.castbar.icon:ClearAllPoints()
         f.castbar.icon:SetPoint("RIGHT", f.castbar, "LEFT", -2, 0)
     end
+
+    if f.debuffs then
+        local size = cfg.auraSize or 22
+        local rows = cfg.auraRows or 1
+        local per  = cfg.auraPerRow or 8
+        f.debuffs:SetSize(per * (size + 2), rows * (size + 2))
+        f.buffs:SetSize(per * (size + 2), rows * (size + 2))
+        self:LayoutAuras(f)
+    end
 end
 
 function UF:ApplyAll()
     for _, info in ipairs(UNITS) do self:ApplyUnit(info.key) end
+end
+
+-- ---------------------------------------------------------------------------
+--  Test mode: force every enabled frame (incl. boss1-5) to show with
+--  placeholder data so they can be positioned without a live target/encounter.
+-- ---------------------------------------------------------------------------
+function UF:FillTest(f, info)
+    f.health:SetMinMaxValues(0, 100); f.health:SetValue(math.random(45, 95))
+    f.health:SetStatusBarColor(0.25, 0.70, 0.35)
+    if f.nameText then f.nameText:SetText(info.label) end
+    if f.healthText then f.healthText:SetText("75%") end
+    if f.power then
+        f.power:SetMinMaxValues(0, 100); f.power:SetValue(math.random(30, 90))
+        f.power:SetStatusBarColor(0.25, 0.40, 0.90)
+    end
+    if f.portrait and (self.db.profile.units[info.key].portraitSize or 0) > 0 then
+        local cfg = self.db.profile.units[info.key]
+        if cfg.portrait3D and f.portrait.model.SetUnit then
+            f.portrait.model:SetUnit("player")
+            if f.portrait.model.SetPortraitZoom then f.portrait.model:SetPortraitZoom(1) end
+            f.portrait.model:Show(); f.portrait.tex:Hide()
+        else
+            SetPortraitTexture(f.portrait.tex, "player")
+            f.portrait.tex:Show(); f.portrait.model:Hide()
+        end
+        f.portrait:Show()
+    end
+end
+
+function UF:SetTestMode(on)
+    if InCombatLockdown() then
+        OUI:Print("|cffd9a441[OUI UnitFrames]|r test mode can't be toggled in combat.")
+        return
+    end
+    self.testMode = on and true or false
+    for _, info in ipairs(UNITS) do
+        local f = self.frames[info.key]
+        local cfg = self.db.profile.units[info.key]
+        if f then
+            if self.testMode and cfg.enabled then
+                UnregisterUnitWatch(f)
+                f:Show()
+                self:FillTest(f, info)
+            else
+                if cfg.enabled then RegisterUnitWatch(f) else f:Hide() end
+                if UnitExists(f.unit) then self:UpdateAll(f) end
+            end
+        end
+    end
 end
 
 -- ---------------------------------------------------------------------------
@@ -429,11 +747,89 @@ end
 function UF:OnInitialize()
     self.db = LibStub("AceDB-3.0"):New("OldschoolUIUnitFramesDB", defaults, true)
     self.frames = {}
+    self._font = (OUI.GetFontPath and OUI.GetFontPath()) or STANDARD_TEXT_FONT
+end
+
+-- range check: UnitInRange is authoritative for group/friendly units. For
+-- everyone else it can't be determined without protected APIs (CheckInteractDistance
+-- is forbidden), so we don't fade those. Returns true when in range or unknown.
+local function UnitRange(unit)
+    local inRange, checked = UnitInRange(unit)
+    if checked then return inRange and true or false end
+    return true
+end
+
+function UF:SetupRangeTicker()
+    if self._rangeTicker then return end
+    local t = CreateFrame("Frame"); self._rangeTicker = t; t.acc = 0
+    t:SetScript("OnUpdate", function(_, dt)
+        t.acc = t.acc + dt
+        if t.acc < 0.2 then return end
+        t.acc = 0
+        if UF.testMode then return end
+        for _, info in ipairs(UNITS) do
+            local f = UF.frames[info.key]
+            local cfg = UF.db.profile.units[info.key]
+            if f and cfg.enabled and cfg.rangeFade and UnitExists(f.unit) then
+                f:SetAlpha(UnitRange(f.unit) and 1 or (cfg.fadeAlpha or 0.45))
+            end
+        end
+    end)
+end
+
+-- ---------------------------------------------------------------------------
+--  Suppress the Blizzard default unit frames OUI replaces (taint-safe).
+--  Unregister + Hide + keep-hidden OnShow hook; deferred out of combat.
+-- ---------------------------------------------------------------------------
+local BLIZZ_UNIT_FRAMES = {
+    player = "PlayerFrame",
+    target = "TargetFrame",
+    focus  = "FocusFrame",
+    pet    = "PetFrame",
+}
+
+local function killBlizzFrame(name)
+    local f = _G[name]
+    if not f then return end
+    if not f._ouiKilled then
+        f._ouiKilled = true
+        if f.UnregisterAllEvents then f:UnregisterAllEvents() end
+        f:HookScript("OnShow", function(s)
+            if UF.db and UF.db.profile.hideBlizzard and not InCombatLockdown() then s:Hide() end
+        end)
+    end
+    f:Hide()
+end
+
+function UF:HideBlizzardFrames()
+    if InCombatLockdown() then
+        self._needBlizzHide = true
+        return
+    end
+    if not self.db.profile.hideBlizzard then return end
+    for key, frameName in pairs(BLIZZ_UNIT_FRAMES) do
+        local cfg = self.db.profile.units[key]
+        if cfg and cfg.enabled then killBlizzFrame(frameName) end
+    end
 end
 
 function UF:OnEnable()
     self:ApplyAll()
+    self:HideBlizzardFrames()
     self:RegisterMovers()
+    self:SetupRangeTicker()
+    -- re-run any layout that was deferred because we were in combat
+    if not self._combatWatcher then
+        local cw = CreateFrame("Frame")
+        self._combatWatcher = cw
+        cw:RegisterEvent("PLAYER_REGEN_ENABLED")
+        cw:RegisterEvent("PLAYER_ENTERING_WORLD")
+        cw:SetScript("OnEvent", function()
+            if UF._needApply then UF._needApply = nil; UF:ApplyAll() end
+            if UF._needBlizzHide then UF._needBlizzHide = nil end
+            UF:HideBlizzardFrames()
+        end)
+    end
     if OUI.RegisterStyleListener then
         OUI.RegisterStyleListener(function()
             for _, info in ipairs(UNITS) do
@@ -461,6 +857,9 @@ SlashCmdList["OUIUF"] = function(msg)
     elseif cmd == "lock" then
         if OUI.ToggleUnlock then OUI:ToggleUnlock(false) end
         OUI:Print("|cffd9a441[OUI UnitFrames]|r locked.")
+    elseif cmd == "test" then
+        UF:SetTestMode(not UF.testMode)
+        OUI:Print("|cffd9a441[OUI UnitFrames]|r test mode " .. (UF.testMode and "ON" or "OFF") .. ".")
     elseif cmd == "enable" or cmd == "disable" then
         local info = UNIT_BY_KEY[arg]
         if info then
