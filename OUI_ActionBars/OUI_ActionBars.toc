@@ -1,0 +1,10 @@
+## Interface: 50504
+## Title: OldschoolUI Action Bars
+## Author: Lyonthedragon
+## Version: 1.0.0
+## Notes: Action bars -- bars, paging, flyout and visibility.
+## Dependencies: OldschoolUI
+## SavedVariables: OldschoolUIActionBarsDB
+
+OUI_ActionBars.lua
+OUI_ActionBars_Options.lua

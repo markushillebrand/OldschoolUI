@@ -1,0 +1,10 @@
+## Interface: 50504
+## Title: OldschoolUI Resource Bars
+## Author: Lyonthedragon
+## Version: 1.0.0
+## Notes: Player health, power and secondary class-resource bars (MoP-native, clean-room).
+## Dependencies: OldschoolUI
+## SavedVariables: OldschoolUIResourceBarsDB
+
+OUI_ResourceBars.lua
+OUI_ResourceBars_Options.lua

@@ -1,0 +1,10 @@
+## Interface: 50504
+## Title: OldschoolUI Minimap
+## Author: Lyonthedragon
+## Version: 1.0.0
+## Notes: Minimap shape, button bin and info elements.
+## Dependencies: OldschoolUI
+## SavedVariables: OldschoolUIMinimapDB
+
+OUI_Minimap.lua
+OUI_Minimap_Options.lua
