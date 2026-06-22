@@ -527,7 +527,34 @@ local function hitSpell()
     return "-"
 end
 
--- Mastery: spec-specific name + description (mirrors Blizzard's mastery tooltip)
+-- Mastery: spec-specific name + description (mirrors Blizzard's mastery tooltip).
+-- The spell description must be resolved through a real tooltip: on MoP Classic
+-- C_Spell.GetSpellDescription does not exist and GetSpellDescription returns the
+-- raw text with unresolved $-variables. SetSpellByID on a scratch tooltip fills
+-- in the player's actual mastery values, which we then scrape line by line.
+local _masteryScanTip
+local function masteryScanTip()
+    if not _masteryScanTip then
+        _masteryScanTip = CreateFrame("GameTooltip", "OUIMasteryScanTip", UIParent, "GameTooltipTemplate")
+        _masteryScanTip:SetOwner(UIParent, "ANCHOR_NONE")
+    end
+    return _masteryScanTip
+end
+
+local function spellTooltipLines(id)
+    local tip = masteryScanTip()
+    if not tip.SetSpellByID then return nil end
+    tip:ClearLines()
+    tip:SetSpellByID(id)
+    local lines, n = {}, tip:NumLines() or 0
+    for i = 1, n do
+        local fs = _G["OUIMasteryScanTipTextLeft" .. i]
+        local txt = fs and fs:GetText()
+        if txt and txt ~= "" then lines[#lines + 1] = txt end
+    end
+    return lines
+end
+
 local function masterySpecLines()
     local out = {}
     local spec
@@ -536,17 +563,29 @@ local function masterySpecLines()
     elseif GetSpecialization then
         spec = GetSpecialization()
     end
-    if spec and GetNumSpecializations and spec > GetNumSpecializations() then spec = nil end
-    if spec and GetSpecializationMasterySpells then
-        local id = GetSpecializationMasterySpells(spec)
-        if id then
-            local name = GetSpellInfo and GetSpellInfo(id)
-            local desc
-            if C_Spell and C_Spell.GetSpellDescription then desc = C_Spell.GetSpellDescription(id)
-            elseif GetSpellDescription then desc = GetSpellDescription(id) end
-            if name and name ~= "" then out[#out + 1] = { text = name, accent = true } end
-            if desc and desc ~= "" then out[#out + 1] = { text = desc } end
+    if not spec then return out end
+    if GetNumSpecializations and spec > GetNumSpecializations() then return out end
+
+    local id = GetSpecializationMasterySpells and GetSpecializationMasterySpells(spec)
+    if id then
+        local name = GetSpellInfo and GetSpellInfo(id)
+        if name and name ~= "" then out[#out + 1] = { text = name, accent = true } end
+        local lines = spellTooltipLines(id)
+        if lines then
+            -- line 1 is the spell name (already shown as the accent header); the
+            -- remaining lines are the resolved effect description.
+            for i = 1, #lines do
+                if not (i == 1 and name and lines[i] == name) then
+                    out[#out + 1] = { text = lines[i] }
+                end
+            end
         end
+    end
+
+    -- fallback: at least show the spec name if the mastery spell lookup failed.
+    if #out == 0 and GetSpecializationInfo then
+        local _, specName = GetSpecializationInfo(spec)
+        if specName and specName ~= "" then out[#out + 1] = { text = specName, accent = true } end
     end
     return out
 end

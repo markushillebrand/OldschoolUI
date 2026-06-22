@@ -1,7 +1,7 @@
 ## Interface: 50504
 ## Title: OldschoolUI Unit Frames
 ## Author: Lyonthedragon
-## Version: 1.0.0
+## Version: @project-version@
 ## Notes: Player, target, focus, pet and boss unit frames.
 ## Dependencies: OldschoolUI
 ## SavedVariables: OldschoolUIUnitFramesDB

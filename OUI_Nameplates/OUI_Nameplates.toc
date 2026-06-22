@@ -1,7 +1,7 @@
 ## Interface: 50504
 ## Title: OldschoolUI Nameplates
 ## Author: Lyonthedragon
-## Version: 1.0.0
+## Version: @project-version@
 ## Notes: Clean, lightweight nameplates (clean-room rewrite, phase NP-5).
 ## Dependencies: OldschoolUI
 ## SavedVariables: OldschoolUINameplatesDB

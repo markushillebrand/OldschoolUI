@@ -325,6 +325,19 @@ function AB:SkinButton(btn, shape)
             btn._ouiMask = btn:CreateMaskTexture()
             btn._ouiMask:SetAllPoints(icon)
             icon:AddMaskTexture(btn._ouiMask)
+            -- The icon is masked, but Blizzard's square state textures (highlight,
+            -- pushed, checked, flash) otherwise show their corners behind the round
+            -- icon. Share the same mask so they follow the icon's shape. We add the
+            -- mask once and only ever swap its texture (round/square), never remove
+            -- it -- the proven pattern that avoids icon corruption on shape switch.
+            local function shareMask(t)
+                if t and t.AddMaskTexture then pcall(t.AddMaskTexture, t, btn._ouiMask) end
+            end
+            shareMask(btn.GetHighlightTexture and btn:GetHighlightTexture())
+            shareMask(btn.GetPushedTexture and btn:GetPushedTexture())
+            shareMask(btn.GetCheckedTexture and btn:GetCheckedTexture())
+            shareMask(btn.Flash)
+            shareMask(btn.NewActionTexture)
         end
         if btn._ouiMask then
             local tex

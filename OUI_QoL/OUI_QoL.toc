@@ -1,7 +1,7 @@
 ## Interface: 50504
 ## Title: OldschoolUI Quality of Life
 ## Author: Lyonthedragon
-## Version: 1.0.0
+## Version: @project-version@
 ## Notes: Lightweight quality of life tools and enhancements (clean-room rewrite, phase QL-1).
 ## Dependencies: OldschoolUI
 ## SavedVariables: OldschoolUIQoLDB

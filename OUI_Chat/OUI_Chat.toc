@@ -1,7 +1,7 @@
 ## Interface: 50504
 ## Title: OldschoolUI Chat
 ## Author: Lyonthedragon
-## Version: 1.0.0
+## Version: @project-version@
 ## Notes: Chat skinning and utilities (clean-room rewrite, phase CH-4).
 ## Dependencies: OldschoolUI
 ## SavedVariables: OldschoolUIChatDB

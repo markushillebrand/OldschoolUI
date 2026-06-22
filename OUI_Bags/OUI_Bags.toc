@@ -1,7 +1,7 @@
 ## Interface: 50504
 ## Title: OldschoolUI Bags
 ## Author: Lyonthedragon
-## Version: 1.0.0
+## Version: @project-version@
 ## Notes: Enhanced bags, bank and guild bank with category sidebar and sorting.
 ## Dependencies: OldschoolUI
 ## SavedVariables: OldschoolUIBagsDB

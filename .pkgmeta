@@ -1,23 +1,26 @@
-# BigWigs packager config. Mirrors the proven EllesmereUI setup; the NEW bits
-# for OUI are the Ace3 externals below. Reuse your working EllesmereUI .pkgmeta
-# if you prefer and just add the externals block + rename.
 package-as: OldschoolUI
 
 enable-nolib-creation: no
 
-externals:
-  OldschoolUI/Libs/LibStub:               https://repos.curseforge.com/wow/libstub
-  OldschoolUI/Libs/CallbackHandler-1.0:   https://repos.curseforge.com/wow/callbackhandler/trunk/CallbackHandler-1.0
-  OldschoolUI/Libs/AceAddon-3.0:          https://repos.curseforge.com/wow/ace3/trunk/AceAddon-3.0
-  OldschoolUI/Libs/AceEvent-3.0:          https://repos.curseforge.com/wow/ace3/trunk/AceEvent-3.0
-  OldschoolUI/Libs/AceDB-3.0:             https://repos.curseforge.com/wow/ace3/trunk/AceDB-3.0
-  # add later if needed: AceHook-3.0, AceConsole-3.0, LibSharedMedia-3.0, LibDeflate
-
 ignore:
-  - .github
-  - "*.md"
-  - .pkgmeta
-  - .gitattributes
-  - .gitignore
+  - OUI_Probe
+  - dev
 
-# CI substitutes @project-version@ in every TOC on tag-push.
+# Suite modules ship as sibling top-level folders in the final zip.
+move-folders:
+  OldschoolUI/OUI_ActionBars: OUI_ActionBars
+  OldschoolUI/OUI_AuraBuffReminders: OUI_AuraBuffReminders
+  OldschoolUI/OUI_Bags: OUI_Bags
+  OldschoolUI/OUI_BlizzardSkin: OUI_BlizzardSkin
+  OldschoolUI/OUI_Chat: OUI_Chat
+  OldschoolUI/OUI_DamageMeter: OUI_DamageMeter
+  OldschoolUI/OUI_Friends: OUI_Friends
+  OldschoolUI/OUI_GroupTimer: OUI_GroupTimer
+  OldschoolUI/OUI_LootRoll: OUI_LootRoll
+  OldschoolUI/OUI_Minimap: OUI_Minimap
+  OldschoolUI/OUI_Nameplates: OUI_Nameplates
+  OldschoolUI/OUI_QoL: OUI_QoL
+  OldschoolUI/OUI_QuestTracker: OUI_QuestTracker
+  OldschoolUI/OUI_RaidFrames: OUI_RaidFrames
+  OldschoolUI/OUI_ResourceBars: OUI_ResourceBars
+  OldschoolUI/OUI_UnitFrames: OUI_UnitFrames

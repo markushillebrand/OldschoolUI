@@ -1,0 +1,8 @@
+## Interface: 50504
+## Title: OUI Probe (API Dumper)
+## Author: Lyonthedragon
+## Version: 1.0
+## Notes: Diagnostic: dumps live class/spec/power-type API data per character for the OldschoolUI rewrite. Run /ouiprobe, then /reload, then send the SavedVariables file.
+## SavedVariables: OUIProbeDB
+
+OUI_Probe.lua

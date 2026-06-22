@@ -1,7 +1,7 @@
 ## Interface: 50504
 ## Title: OldschoolUI Group Timer
 ## Author: Lyonthedragon
-## Version: 1.0.0
+## Version: @project-version@
 ## Notes: Challenge Mode / Heroic Dungeon / Raid run timer with per-boss snapshots and stats.
 ## Dependencies: OldschoolUI
 ## SavedVariables: OldschoolUIGroupTimerDB
