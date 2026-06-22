@@ -92,18 +92,48 @@ function OUI:RegisterUnlockElements(list)
     if OUI._unlockActive then OUI._RefreshUnlockOverlays() end
 end
 
+-- floating "lock" button shown during unlock mode, so frames can be locked
+-- again without the slash command (used by the options-panel Move button too)
+local lockBtn
+local function EnsureLockButton()
+    if lockBtn then return lockBtn end
+    lockBtn = CreateFrame("Button", "OUIMoverLockButton", UIParent)
+    lockBtn:SetSize(170, 30); lockBtn:SetFrameStrata("FULLSCREEN_DIALOG"); lockBtn:SetToplevel(true)
+    lockBtn:SetPoint("TOP", UIParent, "TOP", 0, -120)
+    local bg = Tex(lockBtn, "BACKGROUND", 0.06, 0.06, 0.07); bg:SetAllPoints(); bg:SetAlpha(0.97)
+    local ar, ag, ab = A()
+    Border(lockBtn, ar, ag, ab, 1)
+    lockBtn._lbl = Lbl(lockBtn, 13, ar, ag, ab); lockBtn._lbl:SetPoint("CENTER")
+    lockBtn._lbl:SetText(L("Lock frames"))
+    lockBtn:SetScript("OnEnter", function() lockBtn._lbl:SetTextColor(1, 1, 1) end)
+    lockBtn:SetScript("OnLeave", function() lockBtn._lbl:SetTextColor(A()) end)
+    lockBtn:SetScript("OnClick", function() OUI:ToggleUnlock(false) end)
+    lockBtn:Hide()
+    return lockBtn
+end
+
 function OUI:ToggleUnlock(on)
     if on == nil then on = not OUI._unlockActive end
     OUI._unlockActive = on
     if on then
         OUI._RefreshUnlockOverlays()
+        EnsureLockButton():Show()
         OUI:Print(L("Unlock mode ON -- drag frames, then /ouimove again to lock."))
     else
         for el, ov in pairs(overlays) do
             ov:Hide()
             if el.applyPos then el.applyPos() end
         end
+        if lockBtn then lockBtn:Hide() end
         OUI:Print(L("Unlock mode OFF -- positions saved."))
+        -- If the user entered move mode from the options panel, return them to it
+        -- at the page they were on (the panel only hides while dragging).
+        local reopen = OUI._reopenAfterLock
+        OUI._reopenAfterLock = nil
+        if reopen and not InCombatLockdown() then
+            if type(reopen) == "string" and OUI.SelectPage then OUI:SelectPage(reopen)
+            elseif OUI.Show then OUI:Show() end
+        end
     end
 end
 

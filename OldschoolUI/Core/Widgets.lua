@@ -22,6 +22,21 @@ local function A() return OUI.ACCENT.r, OUI.ACCENT.g, OUI.ACCENT.b end
 local function Font() return OUI._localeFont or STANDARD_TEXT_FONT end
 
 -- ---- low-level helpers ----
+local WHITE8 = "Interface\\Buttons\\WHITE8x8"
+local MASKDIR = "Interface\\AddOns\\OldschoolUI\\media\\buttonmasks\\"
+
+-- A white texture clipped to a rounded mask shape; vertex-colour to tint.
+-- (Masks need a real file texture -- SetColorTexture textures ignore them, which
+--  is why the earlier pill attempt rendered flat.)
+local function MaskedTex(parent, layer, maskName)
+    local t = parent:CreateTexture(nil, layer or "ARTWORK")
+    t:SetTexture(WHITE8)
+    local m = parent:CreateMaskTexture()
+    m:SetTexture(MASKDIR .. maskName, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+    t:AddMaskTexture(m)
+    return t, m
+end
+
 local function SolidTex(parent, layer, r, g, b, a)
     local t = parent:CreateTexture(nil, layer or "ARTWORK")
     t:SetColorTexture(r, g, b, a or 1)
@@ -135,37 +150,69 @@ function OUI.ApplyBorderStyle(frame, size, r, g, b, a, key)
 end
 
 -- =====================================================================
---  Toggle  (rectangular track, square knob; accent fill when on)
+--  Toggle  (true capsule pill: round end-caps + center rect, accent on)
 -- =====================================================================
 local function MakeToggle(parent, opts)
     opts = opts or {}
     local row = CreateFrame("Frame", nil, parent)
-    row:SetSize(opts.width or 280, 22)
+    row:SetSize(opts.width or 280, 24)
 
     local lbl = Label(row, 13); lbl:SetPoint("LEFT")
     lbl:SetText(L(opts.label or ""))
 
+    local H = 22
     local btn = CreateFrame("Button", nil, row)
-    btn:SetSize(44, 20); btn:SetPoint("RIGHT")
-    btn:SetNormalTexture(SolidTex(btn, "BACKGROUND", ROW[1], ROW[2], ROW[3], 1))
-    local brd  = PixelBorder(btn, BRD2[1], BRD2[2], BRD2[3], 1)
-    local knob = SolidTex(btn, "OVERLAY", A())
-    knob:SetSize(18, 16)
+    btn:SetSize(46, H); btn:SetPoint("RIGHT")
+
+    -- a capsule = two round caps (diameter = height -> fully semicircular ends)
+    -- plus a center rectangle between the cap centres. Returns its 3 textures.
+    local function capPart(layer, point)
+        local t, m = MaskedTex(btn, layer, "round")
+        t:SetSize(H, H); t:SetPoint(point); m:SetAllPoints(t)
+        return t
+    end
+    local function capsule(layer)
+        local lc = capPart(layer, "LEFT")
+        local rc = capPart(layer, "RIGHT")
+        local mid = btn:CreateTexture(nil, layer); mid:SetTexture(WHITE8)
+        mid:SetPoint("TOPLEFT", H / 2, 0); mid:SetPoint("BOTTOMRIGHT", -H / 2, 0)
+        return { lc, rc, mid }
+    end
+
+    local track = capsule("BACKGROUND")
+    for _, t in ipairs(track) do t:SetVertexColor(0.24, 0.21, 0.15, 1) end
+    local fill = capsule("BORDER")
+    local function SetFill(show)
+        local r, g, b = A()
+        for _, t in ipairs(fill) do t:SetVertexColor(r, g, b, 1); t:SetShown(show) end
+    end
+    SetFill(false)
+
+    -- round knob
+    local knob, kMask = MaskedTex(btn, "OVERLAY", "round")
+    knob:SetSize(H - 4, H - 4); kMask:SetSize(H - 4, H - 4)
+
     AttachHover(btn)
     Tooltip(btn, opts.tooltip)
 
     local function Render()
         local on = opts.get and opts.get() or false
-        knob:ClearAllPoints()
+        knob:ClearAllPoints(); kMask:ClearAllPoints()
         if on then
-            knob:SetPoint("RIGHT", -1, 0)
-            knob:SetColorTexture(A()); knob:Show()
-            brd:SetColor(A())
+            knob:SetPoint("RIGHT", -2, 0)
+            -- contrast against the accent fill: dark knob on light accents,
+            -- cream knob on dark accents (keeps the switch readable for any theme)
+            local r, g, b = A()
+            local lum = 0.299 * r + 0.587 * g + 0.114 * b
+            if lum > 0.62 then knob:SetVertexColor(0.10, 0.09, 0.07, 1)
+            else knob:SetVertexColor(0.97, 0.95, 0.88, 1) end
+            SetFill(true)
         else
-            knob:SetPoint("LEFT", 1, 0)
-            knob:SetColorTexture(DIM[1], DIM[2], DIM[3], 1)
-            brd:SetColor(BRD2[1], BRD2[2], BRD2[3], 1)
+            knob:SetPoint("LEFT", 2, 0)
+            knob:SetVertexColor(0.62, 0.58, 0.49, 1)
+            SetFill(false)
         end
+        kMask:SetPoint("CENTER", knob, "CENTER")
     end
     btn:SetScript("OnClick", function()
         if opts.set then opts.set(not (opts.get and opts.get())) end
@@ -220,7 +267,12 @@ local function MakeSlider(parent, opts)
 
     local lbl = Label(row, 13); lbl:SetPoint("TOPLEFT")
     lbl:SetText(L(opts.label or ""))
-    local val = Label(row, 13, A()); val:SetPoint("TOPRIGHT")
+    local vbox = CreateFrame("Frame", nil, row)
+    vbox:SetSize(46, 18); vbox:SetPoint("TOPRIGHT")
+    SolidTex(vbox, "BACKGROUND", ROW[1], ROW[2], ROW[3], 1):SetAllPoints()
+    local vbrd = PixelBorder(vbox, A())
+    RegAccent({ type = "callback", fn = function(r, g, b) vbrd:SetColor(r, g, b, 1) end })
+    local val = Label(vbox, 12, A()); val:SetPoint("CENTER")
     RegAccent({ type = "font", obj = val })
 
     local sl = CreateFrame("Slider", nil, row)
@@ -235,10 +287,13 @@ local function MakeSlider(parent, opts)
     fill:SetPoint("LEFT"); fill:SetHeight(2)
 
     local thumb = sl:CreateTexture(nil, "OVERLAY")
-    thumb:SetColorTexture(A()); thumb:SetSize(10, 14)
+    thumb:SetTexture(WHITE8); thumb:SetVertexColor(A()); thumb:SetSize(14, 14)
+    local thMask = sl:CreateMaskTexture()
+    thMask:SetTexture(MASKDIR .. "round", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+    thMask:SetAllPoints(thumb); thumb:AddMaskTexture(thMask)
     sl:SetThumbTexture(thumb)
     RegAccent({ type = "callback", fn = function(r, g, b)
-        fill:SetColorTexture(r, g, b, 1); thumb:SetColorTexture(r, g, b, 1)
+        fill:SetColorTexture(r, g, b, 1); thumb:SetVertexColor(r, g, b, 1)
     end })
     AttachHover(sl)
     Tooltip(sl, opts.tooltip)
@@ -620,3 +675,39 @@ OUI._accentBorder = AccentBorder
 OUI._hover   = AttachHover
 OUI._tooltip = Tooltip
 OUI._palette = { INK = INK, ROW = ROW, BRD = BRD, BRD2 = BRD2, DIM = DIM, TXT = TXT, DANGER = DANGER }
+
+-- Header sweep for module windows (Bags, character sheet, ...). Gives a window's
+-- own title bar the same accent gradient + bottom rule as the config menu, and
+-- registers them with the accent engine so colour changes apply live (no reload).
+function OUI.StyleHeader(frame, opts)
+    if not frame or frame._ouiHeaderStyled then return end
+    frame._ouiHeaderStyled = true
+    opts = opts or {}
+    local intensity = opts.intensity or 0.30
+    local sweep = frame:CreateTexture(nil, opts.layer or "BORDER", nil, opts.sublevel)
+    sweep:SetTexture("Interface\\Buttons\\WHITE8x8"); sweep:SetAllPoints(frame)
+    local function ApplySweep(r, g, b)
+        if sweep.SetGradient and CreateColor then
+            sweep:SetGradient("HORIZONTAL", CreateColor(r, g, b, 0), CreateColor(r, g, b, intensity))
+        elseif sweep.SetGradientAlpha then
+            sweep:SetGradientAlpha("HORIZONTAL", r, g, b, 0, r, g, b, intensity)
+        end
+    end
+    ApplySweep(OUI.ACCENT.r, OUI.ACCENT.g, OUI.ACCENT.b)
+    OUI.RegAccent({ type = "callback", obj = sweep, fn = ApplySweep })
+    if opts.separator ~= false then
+        local sep = frame:CreateTexture(nil, "ARTWORK")
+        sep:SetTexture("Interface\\Buttons\\WHITE8x8")
+        sep:SetVertexColor(OUI.ACCENT.r, OUI.ACCENT.g, OUI.ACCENT.b, 1)
+        sep:SetPoint("BOTTOMLEFT", 0, opts.sepOffset or 0)
+        sep:SetPoint("BOTTOMRIGHT", 0, opts.sepOffset or 0)
+        sep:SetHeight(1)
+        OUI.RegAccent({ type = "solid", obj = sep, a = 1 })
+    end
+    -- live accent (+ legibility glow) for the title font string, if given
+    if opts.title then
+        OUI.RegAccent({ type = "font", obj = opts.title })
+        if OUI.ApplyAccentGlow then OUI.ApplyAccentGlow(opts.title) end
+    end
+    return sweep
+end

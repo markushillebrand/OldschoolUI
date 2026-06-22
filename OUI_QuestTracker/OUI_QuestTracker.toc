@@ -1,0 +1,13 @@
+## Interface: 50504
+## Title: OldschoolUI |cffD9A441QuestTracker|r
+## Notes: Skins, visibility control and quest QoL for the objective tracker.
+## Author: Lyonthedragon
+## Version: 1.0.0
+## Dependencies: OldschoolUI
+## SavedVariables: OldschoolUIQuestTrackerDB
+
+OUI_QuestTracker.lua
+OUI_QuestTracker_Skin.lua
+OUI_QuestTracker_Visibility.lua
+OUI_QuestTracker_QoL.lua
+OUI_QuestTracker_Options.lua

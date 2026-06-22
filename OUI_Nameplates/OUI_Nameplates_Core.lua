@@ -39,6 +39,10 @@ local defaults = {
         -- target / focus
         target = { r = 0.459, g = 0.890, b = 0.580 },
         targetColorEnabled = false,
+        -- class power (secondary resource on the target plate)
+        showClassPower = true,
+        classPowerTargetOnly = true,
+        classPowerHeight = 5,
         focus = { r = 0.051, g = 0.820, b = 0.620 },
         focusColorEnabled = true,
         hoverColor = { r = 1, g = 1, b = 1 },
@@ -280,6 +284,7 @@ local function CreatePlate()
     if ns.AttachCast then ns.AttachCast(f) end
     if ns.AttachAuras then ns.AttachAuras(f) end
     if ns.AttachExtras then ns.AttachExtras(f) end
+    if ns.AttachClassPower then ns.AttachClassPower(f) end
 
     return f
 end
@@ -368,6 +373,7 @@ local function plateSetUnit(plate, unit, nameplate)
     if ns.CastOnSetUnit then ns.CastOnSetUnit(plate) end
     if ns.UpdateAuras then ns.UpdateAuras(plate) end
     if ns.UpdateExtras then ns.UpdateExtras(plate) end
+    if ns.UpdateClassPower then ns.UpdateClassPower(plate) end
     plate:Show()
 end
 
@@ -411,6 +417,11 @@ local function forEachPlate(fn)
         if plate.unit and plate:IsShown() then fn(plate) end
     end
 end
+
+-- Accessors consumed by sibling files (e.g. the class-power module) that drive
+-- their own events but need to reach the live plate objects held here.
+function ns.ForEachPlate(fn) return forEachPlate(fn) end
+function ns.PlateForNameplate(np) return plates[np] end
 
 -- ---------------------------------------------------------------------------
 --  CVars
@@ -489,6 +500,7 @@ function NP:OnInitialize()
 end
 
 function NP:OnEnable()
+    if OUI.IsModuleEnabled and not OUI:IsModuleEnabled("OUI_Nameplates") then return end
     applyCVars()
     -- Suppress Blizzard's plate elements from the driver's own OnNamePlateAdded,
     -- which runs AFTER Blizzard sets up (and event-registers) the cast bar. Doing

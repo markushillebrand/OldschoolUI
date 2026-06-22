@@ -18,6 +18,54 @@ if not OUI then return end
 OUI.GREEN = OUI.GREEN or { r = 0.18, g = 0.78, b = 0.52 }
 
 -------------------------------------------------------------------------------
+--  Module enable/disable
+--  A persistent per-folder flag (db.global.moduleEnabled) decides whether a
+--  module activates. The flag is the *desired* state and is changed live by the
+--  options "O" toggle; it only takes effect after a reload, because each module
+--  reads it once via a guard at the top of its activation path.
+--
+--  `_loadSnapshot` memoizes the value each module saw at load time (the first
+--  IsModuleEnabled call per folder, which is the guard). Comparing the desired
+--  flag against that snapshot tells the UI when a reload is pending.
+-------------------------------------------------------------------------------
+OUI._moduleLoadSnapshot = OUI._moduleLoadSnapshot or {}
+
+function OUI:IsModuleEnabled(folder)
+    if not folder then return true end
+    local g = self.db and self.db.global
+    local on = not (g and g.moduleEnabled and g.moduleEnabled[folder] == false)
+    -- Record the state the module activated with (first read = the guard).
+    if OUI._moduleLoadSnapshot[folder] == nil then
+        OUI._moduleLoadSnapshot[folder] = on
+    end
+    return on
+end
+
+function OUI:SetModuleEnabled(folder, enabled)
+    if not folder then return end
+    local g = self.db and self.db.global
+    if not g then return end
+    g.moduleEnabled = g.moduleEnabled or {}
+    if enabled then g.moduleEnabled[folder] = nil       -- absent == on (lean)
+    else g.moduleEnabled[folder] = false end
+end
+
+-- Desired flag differs from what the module loaded with -> a reload is pending.
+function OUI:ModuleNeedsReload(folder)
+    local snap = OUI._moduleLoadSnapshot[folder]
+    if snap == nil then return false end                 -- module never reported
+    return self:IsModuleEnabled(folder) ~= snap
+end
+
+function OUI:AnyModuleNeedsReload()
+    local snap = OUI._moduleLoadSnapshot
+    for folder in pairs(snap) do
+        if self:ModuleNeedsReload(folder) then return true end
+    end
+    return false
+end
+
+-------------------------------------------------------------------------------
 --  Module navigation / unlock alias
 -------------------------------------------------------------------------------
 function OUI:ShowModule(folder)

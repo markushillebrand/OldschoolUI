@@ -160,6 +160,7 @@ function Bags:BuildWindow()
     f.title:SetPoint("LEFT", header, "LEFT", 2, 0)
     f.title:SetText("Bags")
     f.title:SetTextColor(OUI.ACCENT.r, OUI.ACCENT.g, OUI.ACCENT.b)
+    if OUI.StyleHeader then OUI.StyleHeader(header, { title = f.title }) end
 
     -- sort button (visible in the window, mirrors the options dropdown)
     local sort = CreateFrame("Button", nil, header)
@@ -507,6 +508,11 @@ function Bags:_buildSlot(body, isBank)
     -- elsewhere. We drive the tooltip ourselves from OnEnter using the static item
     -- link, so the template OnUpdate is removed on every slot.
     btn:SetScript("OnUpdate", nil)
+    -- GameTooltip also calls owner:UpdateTooltip() periodically to refresh a live
+    -- tooltip; for the main bank (container -1) that re-resolves SetBagItem(-1)
+    -- into an empty tooltip (flash, then a black box). Kill it -- we set the
+    -- tooltip statically from OnEnter and never want an auto-refresh.
+    btn.UpdateTooltip = nil
 
     -- strip template decorations via methods only (writing properties taints)
     if btn.NewItemTexture then btn.NewItemTexture:SetAlpha(0); btn.NewItemTexture:Hide() end
@@ -575,33 +581,21 @@ function Bags:_buildSlot(body, isBank)
         if not info then GameTooltip:Hide(); return end
         local link = info.hyperlink
             or (C_Container.GetContainerItemLink and C_Container.GetContainerItemLink(bag, slot))
-        -- Bank containers (-1 main bank, -3 reagent, 5-11 bank bags) can't be shown
-        -- with SetBagItem(-1) and, worse, GameTooltip's own auto-refresh re-resolves
-        -- SetInventoryItem/SetBagItem to empty a frame later (tooltip flashes then
-        -- goes black). The item link is static and always resolves, so use it for
-        -- the bank. Regular bags (0-4) keep SetBagItem (count + equip comparison).
-        -- The static item link always resolves and, unlike SetBagItem/
-        -- SetInventoryItem, is not re-resolved into an empty tooltip by
-        -- GameTooltip's auto-refresh (which caused the flash-then-black). Use it
-        -- for every slot; fall back to the container/inventory setters only when
-        -- no link is available.
         GameTooltip:SetOwner(b, "ANCHOR_RIGHT")
-        local ok
-        if link then
-            ok = pcall(GameTooltip.SetHyperlink, GameTooltip, link)
-        elseif bag == -1 and BankButtonIDToInvSlotID then
-            ok = pcall(GameTooltip.SetInventoryItem, GameTooltip, "player", BankButtonIDToInvSlotID(slot))
-        else
-            ok = pcall(GameTooltip.SetBagItem, GameTooltip, bag, slot)
+        -- Prefer STATIC setters (SetHyperlink / SetItemByID). Unlike SetBagItem /
+        -- SetInventoryItem they are never re-resolved into an empty tooltip by
+        -- GameTooltip's own auto-refresh -- that auto-refresh is what blanked the
+        -- main-bank (-1) tooltip to black a frame after OnEnter. SetItemByID is the
+        -- key fallback for bank containers, whose link is sometimes nil.
+        local shown = false
+        if link then shown = pcall(GameTooltip.SetHyperlink, GameTooltip, link) end
+        if (not shown or GameTooltip:NumLines() == 0) and info.itemID and GameTooltip.SetItemByID then
+            GameTooltip:SetOwner(b, "ANCHOR_RIGHT")
+            shown = pcall(GameTooltip.SetItemByID, GameTooltip, info.itemID)
         end
-        if (not ok) or GameTooltip:NumLines() == 0 then
-            if bag == -1 and BankButtonIDToInvSlotID then
-                GameTooltip:SetOwner(b, "ANCHOR_RIGHT")
-                pcall(GameTooltip.SetInventoryItem, GameTooltip, "player", BankButtonIDToInvSlotID(slot))
-            else
-                GameTooltip:SetOwner(b, "ANCHOR_RIGHT")
-                pcall(GameTooltip.SetBagItem, GameTooltip, bag, slot)
-            end
+        if not shown or GameTooltip:NumLines() == 0 then
+            GameTooltip:SetOwner(b, "ANCHOR_RIGHT")
+            pcall(GameTooltip.SetBagItem, GameTooltip, bag, slot)   -- last resort (regular bags)
         end
         GameTooltip:Show()
     end)
@@ -1468,8 +1462,26 @@ function Bags:OnInitialize()
 end
 
 function Bags:OnEnable()
+    if OUI.IsModuleEnabled and not OUI:IsModuleEnabled("OUI_Bags") then return end
     self:SuppressBlizzard()
     self:HookBlizzard()
+
+    if not Bags._moverReg and OUI.RegisterUnlockElements and OUI.MakeUnlockElement then
+        Bags._moverReg = true
+        OUI:RegisterUnlockElements({ OUI.MakeUnlockElement({
+            key = "OUIBags", label = "Bags", group = "Bags", order = 570,
+            getFrame = function() return Bags.win end,
+            getSize  = function() return (Bags.win and Bags.win:GetWidth()) or 300, (Bags.win and Bags.win:GetHeight()) or 400 end,
+            isHidden = function() return not (Bags.win and Bags.win:IsShown()) end,
+            savePos  = function(_, _, _, x, y)
+                if Bags.win then
+                    Bags.win:ClearAllPoints(); Bags.win:SetPoint("CENTER", UIParent, "CENTER", x, y)
+                    Bags:SavePosition()
+                end
+            end,
+            applyPos = function() Bags:Reposition() end,
+        }) })
+    end
     self:RegisterEvent("PLAYER_MONEY", "UpdateGold")
     self:RegisterEvent("PLAYER_ENTERING_WORLD", function() Bags:UpdateGoldLog() end)
     self:RegisterEvent("MERCHANT_SHOW", function()

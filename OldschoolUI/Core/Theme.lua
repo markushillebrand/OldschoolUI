@@ -188,6 +188,31 @@ function OUI.GetAccentColor()
     return OUI.ACCENT.r, OUI.ACCENT.g, OUI.ACCENT.b
 end
 
+-- Perceived luminance of the live accent (0 dark .. 1 light).
+function OUI.AccentLuminance(r, g, b)
+    r, g, b = r or OUI.ACCENT.r, g or OUI.ACCENT.g, b or OUI.ACCENT.b
+    return 0.299 * r + 0.587 * g + 0.114 * b
+end
+
+-- Legibility glow: accent-coloured text on the dark UI can wash out when the
+-- accent itself is dark. Register a font string here and it gets a soft light
+-- halo when the accent is dark (and none when it is light), updating live with
+-- the accent colour. Keyed by the font string so re-registering is idempotent.
+function OUI.ApplyAccentGlow(fs)
+    if not (fs and fs.SetShadowColor) then return end
+    local function update(r, g, b)
+        if OUI.AccentLuminance(r, g, b) < 0.50 then
+            fs:SetShadowColor(0.98, 0.95, 0.85, 0.85)
+            fs:SetShadowOffset(0.8, -0.8)
+        else
+            fs:SetShadowColor(0, 0, 0, 0)
+            fs:SetShadowOffset(0, 0)
+        end
+    end
+    update(OUI.ACCENT.r, OUI.ACCENT.g, OUI.ACCENT.b)
+    RegAccent({ type = "callback", obj = fs, fn = update })
+end
+
 function OUI.GetActiveTheme()
     local g = OUI.db and OUI.db.global
     return (g and g.activeTheme) or "OldschoolUI"

@@ -51,6 +51,7 @@ function Bags:BuildBankWindow()
     f.title = header:CreateFontString(nil, "OVERLAY")
     f.title:SetFont(Font(), 15, "OUTLINE"); f.title:SetPoint("LEFT", header, "LEFT", 2, 0)
     f.title:SetText(L("Bank")); f.title:SetTextColor(OUI.ACCENT.r, OUI.ACCENT.g, OUI.ACCENT.b)
+    if OUI.StyleHeader then OUI.StyleHeader(header, { title = f.title }) end
 
     -- sort button (shared sortMode)
     local sort = CreateFrame("Button", nil, header)

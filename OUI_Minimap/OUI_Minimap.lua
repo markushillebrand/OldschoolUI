@@ -4,6 +4,7 @@
 -- ===========================================================================
 local ADDON, ns = ...
 local OUI = OldschoolUI
+local L = (OUI and OUI.L) or function(s) return s end
 local MM = LibStub("AceAddon-3.0"):NewAddon("OldschoolUIMinimap", "AceEvent-3.0")
 ns.MM = MM
 
@@ -210,6 +211,7 @@ function MM:OnEnterWorld()
 end
 
 function MM:OnEnable()
+    if OUI.IsModuleEnabled and not OUI:IsModuleEnabled("OUI_Minimap") then return end
     self:ApplyShape()
     self:SetupZoom()
     self:BuildBin()
@@ -379,6 +381,192 @@ end
 -- Our own square indicator buttons (calendar / tracking / friends / lfg),
 -- styled like the bin buttons, shown in the pinned row with the toggle. These
 -- replace Blizzard's round calendar/tracking/queue buttons (which we hide).
+-- ===========================================================================
+--  Group Finder indicator tooltip: live queue wait times
+-- ===========================================================================
+local function FmtWait(sec)
+    sec = math.floor((tonumber(sec) or 0) + 0.5)
+    if sec < 0 then sec = 0 end
+    return string.format("%d:%02d", math.floor(sec / 60), sec % 60)
+end
+
+-- estimated wait, always shown in minutes ("< 1 minute" below a minute)
+local function FmtEstMinutes(sec)
+    sec = tonumber(sec) or 0
+    if sec < 60 then return L("< 1 minute") end
+    return string.format(L("%d min"), math.floor(sec / 60 + 0.5))
+end
+
+-- We track our own queue-start time per LFG category. MoP Classic's
+-- GetLFGQueueStats queuedTime is not a usable GetTime() stamp, so deriving
+-- "time in queue" from it yields garbage; GetTime()-ourStart is reliable.
+local qStart = {}
+
+-- LFG categories available on this client (constants may be absent -> skipped)
+local _lfgCats
+local function QueueCategories()
+    if _lfgCats then return _lfgCats end
+    _lfgCats = {}
+    local cands = {
+        { LE_LFG_CATEGORY_LFD,      "Dungeon Finder" },
+        { LE_LFG_CATEGORY_LFR,      "Raid Finder" },
+        { LE_LFG_CATEGORY_RF,       "Raid Finder" },
+        { LE_LFG_CATEGORY_SCENARIO, "Scenario" },
+        { LE_LFG_CATEGORY_FLEXRAID, "Flex Raid" },
+    }
+    local seen = {}
+    for _, c in ipairs(cands) do
+        if c[1] and not seen[c[1]] then seen[c[1]] = true; _lfgCats[#_lfgCats + 1] = c end
+    end
+    return _lfgCats
+end
+
+local function UpdateQueueStarts()
+    if not GetLFGMode then return end
+    for _, c in ipairs(QueueCategories()) do
+        local mode = GetLFGMode(c[1])
+        if mode == "queued" then
+            if not qStart[c[1]] then qStart[c[1]] = GetTime() end
+        elseif mode ~= "proposal" and mode ~= "rolecheck" then
+            qStart[c[1]] = nil
+        end
+    end
+end
+
+local function RenderQueueTooltip(owner)
+    UpdateQueueStarts()
+    GameTooltip:SetOwner(owner, "ANCHOR_LEFT")
+    GameTooltip:AddLine(L("Group Finder"), 1, 0.82, 0)
+    local ar, ag, ab = 0.85, 0.64, 0.25
+    if OUI.GetAccentColor then local r, g, b = OUI.GetAccentColor(); if r then ar, ag, ab = r, g, b end end
+    local any = false
+
+    -- dungeon / raid / scenario finder
+    if GetLFGMode and GetLFGQueueStats then
+        for _, c in ipairs(QueueCategories()) do
+            local mode = GetLFGMode(c[1])
+            if mode == "queued" then
+                any = true
+                local _, _, _, _, _, _, _, instName, avgWait, _, _, _, myWait = GetLFGQueueStats(c[1])
+                GameTooltip:AddLine(" ")
+                GameTooltip:AddLine(instName or L(c[2]), ar, ag, ab)
+                local est = (avgWait and avgWait > 0) and avgWait or myWait
+                GameTooltip:AddDoubleLine(L("Estimated wait"),
+                    (est and est > 0) and FmtEstMinutes(est) or L("Unavailable"), 0.8, 0.8, 0.8, 1, 1, 1)
+                local start = qStart[c[1]]
+                GameTooltip:AddDoubleLine(L("Time in queue"),
+                    start and FmtWait(GetTime() - start) or "--", 0.8, 0.8, 0.8, 1, 1, 1)
+            elseif mode == "proposal" or mode == "rolecheck" then
+                any = true
+                GameTooltip:AddLine(" ")
+                GameTooltip:AddLine(L(c[2]), ar, ag, ab)
+                GameTooltip:AddLine(L("Ready check pending"), 0.3, 1, 0.3)
+            end
+        end
+    end
+
+    -- battleground / PvP queues (wait times reported in milliseconds)
+    if GetMaxBattlefieldID and GetBattlefieldStatus then
+        for i = 1, (GetMaxBattlefieldID() or 0) do
+            local status, mapName = GetBattlefieldStatus(i)
+            if status == "queued" then
+                any = true
+                GameTooltip:AddLine(" ")
+                GameTooltip:AddLine(mapName or L("Battleground"), ar, ag, ab)
+                local est = GetBattlefieldEstimatedWaitTime and GetBattlefieldEstimatedWaitTime(i)
+                local waited = GetBattlefieldTimeWaited and GetBattlefieldTimeWaited(i)
+                GameTooltip:AddDoubleLine(L("Estimated wait"),
+                    (est and est > 0) and FmtEstMinutes(est / 1000) or L("Unavailable"), 0.8, 0.8, 0.8, 1, 1, 1)
+                GameTooltip:AddDoubleLine(L("Time in queue"),
+                    waited and FmtWait(waited / 1000) or "--", 0.8, 0.8, 0.8, 1, 1, 1)
+            end
+        end
+    end
+
+    if not any then
+        GameTooltip:AddLine(L("Not in any queue"), 0.6, 0.6, 0.6)
+    end
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddLine(L("Click to open the Group Finder"), 0.5, 0.5, 0.5)
+    GameTooltip:Show()
+end
+
+-- shown on hover; re-renders once a second so "Time in queue" ticks live
+function MM:ShowQueueTooltip(owner)
+    RenderQueueTooltip(owner)
+    owner:SetScript("OnUpdate", function(self, dt)
+        if not GameTooltip:IsOwned(self) then self:SetScript("OnUpdate", nil); return end
+        self._qtAcc = (self._qtAcc or 0) + dt
+        if self._qtAcc < 1 then return end
+        self._qtAcc = 0
+        RenderQueueTooltip(self)
+    end)
+end
+
+-- right-click context menu: mirrors the Blizzard queue-eye actions.
+-- Builds a plain item list, then renders it with whichever menu API the client
+-- exposes (modern MenuUtil on this engine; legacy EasyMenu as a fallback).
+local lfgMenuFrame
+local function LFGMenuItems()
+    local items = {}
+    if IsInLFGDungeon and LFGTeleport then
+        if IsInLFGDungeon() then
+            items[#items + 1] = { L("Teleport out of dungeon"), function() LFGTeleport(true) end }
+        elseif HasLFGRestrictions and HasLFGRestrictions() then
+            items[#items + 1] = { L("Teleport into dungeon"), function() LFGTeleport(false) end }
+        end
+    end
+    if GetLFGMode and LeaveLFG then
+        for _, c in ipairs(QueueCategories()) do
+            local mode = GetLFGMode(c[1])
+            if mode == "queued" or mode == "rolecheck" then
+                local cat = c[1]
+                items[#items + 1] = { L("Leave queue") .. " - " .. L(c[2]), function() pcall(LeaveLFG, cat) end }
+            end
+        end
+    end
+    if IsInLFGDungeon and IsInLFGDungeon() then
+        items[#items + 1] = { L("Leave dungeon"), function()
+            if C_PartyInfo and C_PartyInfo.LeaveParty then C_PartyInfo.LeaveParty()
+            elseif LeaveParty then LeaveParty() end
+        end }
+    end
+    items[#items + 1] = { L("Open Group Finder"), function()
+        if PVEFrame_ToggleFrame then PVEFrame_ToggleFrame()
+        elseif ToggleLFDParentFrame then ToggleLFDParentFrame() end
+    end }
+    return items
+end
+
+function MM:ShowLFGMenu(anchor)
+    local items = LFGMenuItems()
+
+    -- modern menu API (current MoP Classic engine)
+    if MenuUtil and MenuUtil.CreateContextMenu then
+        MenuUtil.CreateContextMenu(anchor or Minimap, function(_, root)
+            root:CreateTitle(L("Group Finder"))
+            for _, it in ipairs(items) do root:CreateButton(it[1], it[2]) end
+        end)
+        return
+    end
+
+    -- legacy dropdown fallback
+    if EasyMenu then
+        if not lfgMenuFrame then
+            lfgMenuFrame = CreateFrame("Frame", "OUIMinimapLFGMenu", UIParent, "UIDropDownMenuTemplate")
+        end
+        local menu = { { text = L("Group Finder"), isTitle = true, notCheckable = true } }
+        for _, it in ipairs(items) do
+            menu[#menu + 1] = { text = it[1], notCheckable = true, func = it[2] }
+        end
+        menu[#menu + 1] = { text = CANCEL or L("Cancel"), notCheckable = true, func = function() end }
+        EasyMenu(menu, lfgMenuFrame, anchor or "cursor", 0, 0, "MENU")
+        return
+    end
+
+    if PVEFrame_ToggleFrame then PVEFrame_ToggleFrame() end
+end
+
 function MM:BuildIndicators()
     if self.ind then return end
     self.ind = {}
@@ -426,11 +614,23 @@ function MM:BuildIndicators()
 
     local lfg = mk("LFG")
     icon(lfg, "Interface\\Icons\\INV_Misc_GroupLooking")
-    lfg:SetScript("OnClick", function()
-        if PVEFrame_ToggleFrame then PVEFrame_ToggleFrame()
+    lfg:SetScript("OnClick", function(self, button)
+        if button == "RightButton" then
+            MM:ShowLFGMenu(self)
+        elseif PVEFrame_ToggleFrame then PVEFrame_ToggleFrame()
         elseif ToggleLFDParentFrame then ToggleLFDParentFrame() end
     end)
-    tip(lfg, "Group Finder")
+    tip(lfg, "Group Finder", function(self) MM:ShowQueueTooltip(self) end)
+
+    -- keep queue-start times current even when the tooltip isn't shown, so
+    -- "Time in queue" counts from the actual queue moment
+    local qtrack = CreateFrame("Frame")
+    for _, ev in ipairs({
+        "LFG_UPDATE", "LFG_PROPOSAL_SHOW", "LFG_PROPOSAL_FAILED",
+        "LFG_PROPOSAL_SUCCEEDED", "LFG_ROLE_CHECK_UPDATE", "PLAYER_ENTERING_WORLD",
+    }) do pcall(qtrack.RegisterEvent, qtrack, ev) end
+    qtrack:SetScript("OnEvent", function() UpdateQueueStarts() end)
+    UpdateQueueStarts()
 end
 
 function MM:RefreshIndicators()

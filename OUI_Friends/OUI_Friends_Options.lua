@@ -67,39 +67,43 @@ local function Color(page, label, key, tip)
     }))
 end
 
+local function buildGeneral(page)
+    Toggle(page, "Enable Friends panel", "enabled")
+    Toggle(page, "Replace Blizzard Friends Frame", "replaceBlizzard",
+        "Open this panel instead of the default frame when the Friends button is used.")
+    Toggle(page, "Open on login", "autoShow")
+    Toggle(page, "Show offline friends", "showOffline")
+    Toggle(page, "Auto-accept friend invites", "autoAcceptFriendInvites",
+        "Automatically accept incoming Battle.net friend requests.")
+end
+
+local function buildAppearance(page)
+    Color(page, "Background Color", "bgColor")
+    Toggle(page, "Show Border", "showBorder")
+    Color(page, "Border Color", "borderColor")
+    Toggle(page, "Accent Header Line", "accentHeader")
+    FloatSlider(page, "Scale (%)", "scale", 50, 200, 5, 1.0)
+    Slider(page, "Width", "width", 220, 520, 10, 320)
+    Slider(page, "Height", "height", 200, 800, 20, 420)
+end
+
+local function buildList(page)
+    Toggle(page, "Show Ignored Tab", "showIgnoredTab")
+    Toggle(page, "Show Who Tab", "showWhoTab")
+    Toggle(page, "Class-Colored Names", "classColorNames")
+    Toggle(page, "Show Class Icons", "showClassIcons")
+    Toggle(page, "Show Faction Icons", "showFactionIcons")
+    Toggle(page, "Group by Realm", "groupByRealm",
+        "Group friends under collapsible realm headers.")
+end
+
 OUI:RegisterModule("OUI_Friends", {
     category    = "Better UI Module", order = 26,
     title       = "Friends",
     description = "A clean friends panel with class icons, faction icons and realm grouping.",
-    build = function(page)
-        ---------------------------------------------------------------- GENERAL
-        Header(page, "General")
-        Toggle(page, "Enable Friends panel", "enabled")
-        Toggle(page, "Replace Blizzard Friends Frame", "replaceBlizzard",
-            "Open this panel instead of the default frame when the Friends button is used.")
-        Toggle(page, "Open on login", "autoShow")
-        Toggle(page, "Show offline friends", "showOffline")
-        Toggle(page, "Auto-accept friend invites", "autoAcceptFriendInvites",
-            "Automatically accept incoming Battle.net friend requests.")
-
-        ------------------------------------------------------------- APPEARANCE
-        Header(page, "Appearance")
-        Color(page, "Background Color", "bgColor")
-        Toggle(page, "Show Border", "showBorder")
-        Color(page, "Border Color", "borderColor")
-        Toggle(page, "Accent Header Line", "accentHeader")
-        FloatSlider(page, "Scale (%)", "scale", 50, 200, 5, 1.0)
-        Slider(page, "Width", "width", 220, 520, 10, 320)
-        Slider(page, "Height", "height", 200, 800, 20, 420)
-
-        ----------------------------------------------------------------- LIST
-        Header(page, "List")
-        Toggle(page, "Show Ignored Tab", "showIgnoredTab")
-        Toggle(page, "Show Who Tab", "showWhoTab")
-        Toggle(page, "Class-Colored Names", "classColorNames")
-        Toggle(page, "Show Class Icons", "showClassIcons")
-        Toggle(page, "Show Faction Icons", "showFactionIcons")
-        Toggle(page, "Group by Realm", "groupByRealm",
-            "Group friends under collapsible realm headers.")
-    end,
+    tabs = {
+        { title = "General",    build = buildGeneral },
+        { title = "Appearance", build = buildAppearance },
+        { title = "List",       build = buildList },
+    },
 })

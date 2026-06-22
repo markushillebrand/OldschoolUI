@@ -68,122 +68,133 @@ local function Swatch(page, label, key, kind)
     }))
 end
 
+local function buildGeneral(page)
+    Toggle(page, "Suppress Lua Errors", "suppressLuaErrors",
+        "Hide Lua error popups (same as the Display Lua Errors option).")
+    Toggle(page, "Hide Screenshot Message", "hideScreenshotMsg",
+        "Suppress the on-screen 'screenshot captured' confirmation.")
+    Toggle(page, "Skip Cinematics", "skipCinematics",
+        "Automatically skip in-game cinematics and movies.")
+    Toggle(page, "Announce Instance Reset", "announceInstanceReset",
+        "Post a group message when you reset instances.")
+    Toggle(page, "Hide Blizzard Party Panel", "hidePartyPanel",
+        "Hide the default party/raid-manager frames (use with OUI unit frames).")
+end
+
+local function buildInventory(page)
+    Toggle(page, "Auto Repair", "autoRepair",
+        "Automatically repair all gear when visiting a repair vendor.")
+    Toggle(page, "Use Guild Bank Funds", "autoRepairGuild",
+        "Pay repairs from the guild bank when available.")
+    Toggle(page, "Quick Loot", "quickLoot",
+        "Instantly loot everything (hold the auto-loot modifier to bypass).")
+    Toggle(page, "Auto Open Containers", "autoOpenContainers",
+        "Automatically open right-click-to-open items in your bags.")
+    Toggle(page, "Auto-Fill Delete Confirmation", "autoFillDelete",
+        "Pre-fill the 'type DELETE' box when deleting valuable items.")
+end
+
+local function buildInfo(page)
+    Toggle(page, "FPS Counter", "showFPS",
+        "Show a frames-per-second readout (/ouimove to move).")
+    Toggle(page, "Home Latency (ms)", "showLocalMS",
+        "Show your home (local) latency in the FPS container.")
+    Toggle(page, "World Latency (ms)", "showWorldMS",
+        "Show your world latency in the FPS container.")
+    Slider(page, "FPS Container Scale", "fpsScale", 0.5, 2, 0.1, 1,
+        "Resize the FPS / latency container.")
+    Toggle(page, "Override FPS Background", "fpsBgOverride",
+        "Use a custom background colour instead of the OUI default.")
+    Swatch(page, "FPS Background Colour", "fpsBgColor", "bg")
+    Toggle(page, "Override FPS Text Colour", "fpsTextOverride",
+        "Use a custom text colour instead of the accent colour.")
+    Swatch(page, "FPS Text Colour", "fpsTextColor", "text")
+
+    Toggle(page, "Secondary Stats", "showSecondaryStats",
+        "Show Crit / Haste / Mastery on screen (/ouimove to move).")
+    Slider(page, "Stats Container Scale", "statsScale", 0.5, 2, 0.1, 1,
+        "Resize the secondary-stats container.")
+    Toggle(page, "Override Stats Background", "statsBgOverride",
+        "Use a custom background colour instead of the OUI default.")
+    Swatch(page, "Stats Background Colour", "statsBgColor", "bg")
+    Toggle(page, "Override Stats Text Colour", "statsTextOverride",
+        "Use a custom text colour instead of the accent colour.")
+    Swatch(page, "Stats Text Colour", "statsTextColor", "text")
+
+    Toggle(page, "Low Durability Warning", "lowDurabilityWarn",
+        "Warn when your lowest-durability item drops below the threshold.")
+    Slider(page, "Durability Threshold (%)", "lowDurabilityPct", 5, 50, 5, 20,
+        "Show the warning when equipment falls to or below this percentage.")
+end
+
+local function buildCursor(page)
+    Toggle(page, "Cursor Circle", "cursorCircle",
+        "Show a ring that follows your mouse cursor.")
+    Dropdown(page, "Ring Style", "cursorStyle",
+        ns.CURSOR_RING_NAMES, ns.CURSOR_RING_ORDER, "normal",
+        "Thickness of the cursor ring.")
+    Slider(page, "Ring Size", "cursorSize", 16, 96, 4, 32,
+        "Diameter of the cursor ring in pixels.")
+    Dropdown(page, "Ring Colour Mode", "cursorColorMode",
+        { accent = "Accent", class = "Class", custom = "Custom" },
+        { "accent", "class", "custom" }, "accent",
+        "Accent colour, your class colour, or a custom colour.")
+    page:AddRow(OUI.Widgets.ColorSwatch(page, {
+        label = L("Custom Ring Colour"),
+        get = function() local c = Cfg("cursorColor") or { 1, 1, 1 }; return c[1], c[2], c[3] end,
+        set = function(r, g, b) Set("cursorColor", { r, g, b }); Apply() end,
+    }))
+    Toggle(page, "Only in Dungeons / Raids", "cursorInstanceOnly",
+        "Only show the cursor ring inside party or raid instances.")
+    Toggle(page, "Cursor Trail", "cursorTrail",
+        "Leave a fading trail of dots behind the cursor.")
+    Slider(page, "Trail Size", "cursorTrailSize", 8, 48, 2, 24,
+        "Size of the trail dots in pixels.")
+    Toggle(page, "GCD Ring", "cursorGCD",
+        "Show a global-cooldown spinner around the cursor (uses the ring style/colour).")
+    Slider(page, "GCD Ring Size", "cursorGCDSize", 24, 96, 4, 44,
+        "Diameter of the GCD ring in pixels.")
+    Toggle(page, "Cast Ring", "cursorCast",
+        "Show a cast/channel progress ring around the cursor (grey when non-interruptible).")
+    Slider(page, "Cast Ring Size", "cursorCastSize", 24, 96, 4, 40,
+        "Diameter of the cast ring in pixels.")
+end
+
+local function buildTracker(page)
+    Toggle(page, "Bloodlust Tracker", "bloodlustTracker",
+        "Show an icon with the remaining Bloodlust/Heroism lockout timer (/ouimove to move).")
+    Slider(page, "Bloodlust Icon Size", "bloodlustSize", 24, 80, 4, 40,
+        "Size of the Bloodlust tracker icon.")
+    Header(page, "Auto Combat Logging")
+    Toggle(page, "Auto Combat Logging", "autoLog",
+        "Automatically start/stop the combat log based on the instance you enter.")
+    Toggle(page, "Log Raids", "logRaid", "Log normal and heroic raids.")
+    Toggle(page, "Log LFR", "logLFR", "Log Raid Finder.")
+    Toggle(page, "Log Heroic Dungeons", "logHeroicDungeon", "Log heroic 5-man dungeons.")
+    Toggle(page, "Log Scenarios", "logScenario", "Log scenarios.")
+    Toggle(page, "Log Challenge Modes", "logChallenge", "Log challenge-mode dungeons.")
+    Toggle(page, "Delay Stop (30s)", "logDelayStop",
+        "Keep logging for 30s after leaving, to capture wrap-up events.")
+end
+
+local function buildTools(page)
+    Toggle(page, "Enable Frame Mover", "shifter",
+        "Shift+drag Blizzard windows to move them permanently; Ctrl+drag for a temporary move. Use /ouiqolreset to reset.")
+    Header(page, "Trainer")
+    Toggle(page, "Trainer: Train All Button", "trainAllButton",
+        "Add a 'Train All' button to the class trainer.")
+end
+
 OUI:RegisterModule("OUI_QoL", {
     category    = "QoL Functions", order = 10,
     title       = "Quality of Life",
     description = "Lightweight convenience tweaks.",
-    build = function(page)
-        Header(page, "General")
-        Toggle(page, "Suppress Lua Errors", "suppressLuaErrors",
-            "Hide Lua error popups (same as the Display Lua Errors option).")
-        Toggle(page, "Hide Screenshot Message", "hideScreenshotMsg",
-            "Suppress the on-screen 'screenshot captured' confirmation.")
-        Toggle(page, "Skip Cinematics", "skipCinematics",
-            "Automatically skip in-game cinematics and movies.")
-        Toggle(page, "Announce Instance Reset", "announceInstanceReset",
-            "Post a group message when you reset instances.")
-        Toggle(page, "Hide Blizzard Party Panel", "hidePartyPanel",
-            "Hide the default party/raid-manager frames (use with OUI unit frames).")
-
-        Header(page, "Inventory & Vendor")
-        Toggle(page, "Auto Repair", "autoRepair",
-            "Automatically repair all gear when visiting a repair vendor.")
-        Toggle(page, "Use Guild Bank Funds", "autoRepairGuild",
-            "Pay repairs from the guild bank when available.")
-        Toggle(page, "Quick Loot", "quickLoot",
-            "Instantly loot everything (hold the auto-loot modifier to bypass).")
-        Toggle(page, "Auto Open Containers", "autoOpenContainers",
-            "Automatically open right-click-to-open items in your bags.")
-        Toggle(page, "Auto-Fill Delete Confirmation", "autoFillDelete",
-            "Pre-fill the 'type DELETE' box when deleting valuable items.")
-
-        Header(page, "Info Displays")
-        Toggle(page, "FPS Counter", "showFPS",
-            "Show a frames-per-second readout (/ouimove to move).")
-        Toggle(page, "Home Latency (ms)", "showLocalMS",
-            "Show your home (local) latency in the FPS container.")
-        Toggle(page, "World Latency (ms)", "showWorldMS",
-            "Show your world latency in the FPS container.")
-        Slider(page, "FPS Container Scale", "fpsScale", 0.5, 2, 0.1, 1,
-            "Resize the FPS / latency container.")
-        Toggle(page, "Override FPS Background", "fpsBgOverride",
-            "Use a custom background colour instead of the OUI default.")
-        Swatch(page, "FPS Background Colour", "fpsBgColor", "bg")
-        Toggle(page, "Override FPS Text Colour", "fpsTextOverride",
-            "Use a custom text colour instead of the accent colour.")
-        Swatch(page, "FPS Text Colour", "fpsTextColor", "text")
-
-        Toggle(page, "Secondary Stats", "showSecondaryStats",
-            "Show Crit / Haste / Mastery on screen (/ouimove to move).")
-        Slider(page, "Stats Container Scale", "statsScale", 0.5, 2, 0.1, 1,
-            "Resize the secondary-stats container.")
-        Toggle(page, "Override Stats Background", "statsBgOverride",
-            "Use a custom background colour instead of the OUI default.")
-        Swatch(page, "Stats Background Colour", "statsBgColor", "bg")
-        Toggle(page, "Override Stats Text Colour", "statsTextOverride",
-            "Use a custom text colour instead of the accent colour.")
-        Swatch(page, "Stats Text Colour", "statsTextColor", "text")
-
-        Toggle(page, "Low Durability Warning", "lowDurabilityWarn",
-            "Warn when your lowest-durability item drops below the threshold.")
-        Slider(page, "Durability Threshold (%)", "lowDurabilityPct", 5, 50, 5, 20,
-            "Show the warning when equipment falls to or below this percentage.")
-
-        Header(page, "Cursor")
-        Toggle(page, "Cursor Circle", "cursorCircle",
-            "Show a ring that follows your mouse cursor.")
-        Dropdown(page, "Ring Style", "cursorStyle",
-            ns.CURSOR_RING_NAMES, ns.CURSOR_RING_ORDER, "normal",
-            "Thickness of the cursor ring.")
-        Slider(page, "Ring Size", "cursorSize", 16, 96, 4, 32,
-            "Diameter of the cursor ring in pixels.")
-        Dropdown(page, "Ring Colour Mode", "cursorColorMode",
-            { accent = "Accent", class = "Class", custom = "Custom" },
-            { "accent", "class", "custom" }, "accent",
-            "Accent colour, your class colour, or a custom colour.")
-        page:AddRow(OUI.Widgets.ColorSwatch(page, {
-            label = L("Custom Ring Colour"),
-            get = function() local c = Cfg("cursorColor") or { 1, 1, 1 }; return c[1], c[2], c[3] end,
-            set = function(r, g, b) Set("cursorColor", { r, g, b }); Apply() end,
-        }))
-        Toggle(page, "Only in Dungeons / Raids", "cursorInstanceOnly",
-            "Only show the cursor ring inside party or raid instances.")
-        Toggle(page, "Cursor Trail", "cursorTrail",
-            "Leave a fading trail of dots behind the cursor.")
-        Slider(page, "Trail Size", "cursorTrailSize", 8, 48, 2, 24,
-            "Size of the trail dots in pixels.")
-        Toggle(page, "GCD Ring", "cursorGCD",
-            "Show a global-cooldown spinner around the cursor (uses the ring style/colour).")
-        Slider(page, "GCD Ring Size", "cursorGCDSize", 24, 96, 4, 44,
-            "Diameter of the GCD ring in pixels.")
-        Toggle(page, "Cast Ring", "cursorCast",
-            "Show a cast/channel progress ring around the cursor (grey when non-interruptible).")
-        Slider(page, "Cast Ring Size", "cursorCastSize", 24, 96, 4, 40,
-            "Diameter of the cast ring in pixels.")
-
-        Header(page, "Bloodlust Tracker")
-        Toggle(page, "Bloodlust Tracker", "bloodlustTracker",
-            "Show an icon with the remaining Bloodlust/Heroism lockout timer (/ouimove to move).")
-        Slider(page, "Bloodlust Icon Size", "bloodlustSize", 24, 80, 4, 40,
-            "Size of the Bloodlust tracker icon.")
-
-        Header(page, "Auto Combat Logging")
-        Toggle(page, "Auto Combat Logging", "autoLog",
-            "Automatically start/stop the combat log based on the instance you enter.")
-        Toggle(page, "Log Raids", "logRaid", "Log normal and heroic raids.")
-        Toggle(page, "Log LFR", "logLFR", "Log Raid Finder.")
-        Toggle(page, "Log Heroic Dungeons", "logHeroicDungeon", "Log heroic 5-man dungeons.")
-        Toggle(page, "Log Scenarios", "logScenario", "Log scenarios.")
-        Toggle(page, "Log Challenge Modes", "logChallenge", "Log challenge-mode dungeons.")
-        Toggle(page, "Delay Stop (30s)", "logDelayStop",
-            "Keep logging for 30s after leaving, to capture wrap-up events.")
-
-        Header(page, "Frame Mover")
-        Toggle(page, "Enable Frame Mover", "shifter",
-            "Shift+drag Blizzard windows to move them permanently; Ctrl+drag for a temporary move. Use /ouiqolreset to reset.")
-
-        Header(page, "Trainer")
-        Toggle(page, "Trainer: Train All Button", "trainAllButton",
-            "Add a 'Train All' button to the class trainer.")
-    end,
+    tabs = {
+        { title = "General",             build = buildGeneral },
+        { title = "Inventory & Vendor",  build = buildInventory },
+        { title = "Info Displays",       build = buildInfo },
+        { title = "Cursor",              build = buildCursor },
+        { title = "Tracker & Logging",   build = buildTracker },
+        { title = "Tools",               build = buildTools },
+    },
 })

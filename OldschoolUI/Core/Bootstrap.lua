@@ -14,7 +14,7 @@ _G.OUI         = OUI
 NS.OUI         = OUI
 
 OUI.ADDON_NAME = ADDON_NAME
-OUI.VERSION    = "@project-version@"   -- substituted by the packager on tag-push
+OUI.VERSION    = "1.0.0"   -- substituted by the packager on tag-push
 
 -- Account-wide defaults. Theme/accent/locale live in `global`, so one
 -- client-wide profile is the out-of-the-box behaviour; the per-character
@@ -31,6 +31,7 @@ local DEFAULTS = {
         borderSize          = 1,           -- shared default border thickness (px)
         classColors         = {},          -- [CLASS]={r,g,b} global per-class overrides (empty = Blizzard)
         colorIntensity      = 1.0,         -- global class-colour brightness multiplier
+        moduleEnabled       = {},          -- [folder]=false to disable a module (absent/true = on)
     },
     char = {},
 }

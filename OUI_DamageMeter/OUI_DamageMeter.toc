@@ -1,0 +1,12 @@
+## Interface: 50504
+## Title: OldschoolUI Damage Meter
+## Author: Lyonthedragon
+## Version: 1.0.0
+## Notes: Built-in damage / healing / damage-taken meter (combat-log based).
+## Dependencies: OldschoolUI
+## SavedVariables: OldschoolUIDamageMeterDB
+## SavedVariablesPerCharacter: OldschoolUIDamageMeterCharDB
+
+OUI_DamageMeter.lua
+
+OUI_DamageMeter_Options.lua

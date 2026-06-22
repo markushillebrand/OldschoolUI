@@ -999,6 +999,7 @@ function AB:OnInitialize()
 end
 
 function AB:OnEnable()
+    if OUI.IsModuleEnabled and not OUI:IsModuleEnabled("OUI_ActionBars") then return end
     self:CaptureDefaults()
     self:CaptureExtraDefaults()
     self:ApplyAll()

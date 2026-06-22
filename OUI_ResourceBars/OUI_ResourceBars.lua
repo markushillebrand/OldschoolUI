@@ -242,6 +242,30 @@ local function Build()
     RB:Relayout()
     RB:ApplyTextures()
     RB:ApplySkin()
+
+    if not RB._moverRegistered and OUI.RegisterUnlockElements and OUI.MakeUnlockElement then
+        RB._moverRegistered = true
+        OUI:RegisterUnlockElements({ OUI.MakeUnlockElement({
+            key = "OUIResourceBars", label = "Resource Bars", group = "Resource Bars", order = 100,
+            getFrame = function() return container end,
+            getSize  = function() return (container and container:GetWidth()) or RB.db.profile.width or 200, 60 end,
+            isHidden = function() return false end,
+            savePos  = function(_, _, _, x, y)
+                local pr = RB.db and RB.db.profile
+                if pr and x then
+                    pr.point, pr.x, pr.y = "CENTER", x, y
+                    if container then container:ClearAllPoints(); container:SetPoint("CENTER", UIParent, "CENTER", x, y) end
+                end
+            end,
+            applyPos = function()
+                local pr = RB.db and RB.db.profile
+                if container and pr then
+                    container:ClearAllPoints()
+                    container:SetPoint(pr.point or "CENTER", UIParent, pr.point or "CENTER", pr.x or 0, pr.y or 0)
+                end
+            end,
+        }) })
+    end
 end
 
 function RB:Relayout()
@@ -636,6 +660,7 @@ function RB:RefreshAll()
 end
 
 function RB:OnEnable()
+    if OUI.IsModuleEnabled and not OUI:IsModuleEnabled("OUI_ResourceBars") then return end
     Build()
     self:RefreshSecondary()
     self:SetLocked(self.db.profile.locked)

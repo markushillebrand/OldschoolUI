@@ -1,7 +1,7 @@
 ## Interface: 50504
 ## Title: OldschoolUI Aura & Buff Reminders
 ## Author: Lyonthedragon
-## Version: @project-version@
+## Version: 1.0.0
 ## Notes: Reminder icons for missing raid buffs, auras, and consumables (clean-room rewrite, MoP).
 ## Dependencies: OldschoolUI
 ## SavedVariables: OldschoolUIAuraBuffRemindersDB

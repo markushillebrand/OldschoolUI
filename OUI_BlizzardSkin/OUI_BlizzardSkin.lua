@@ -477,6 +477,7 @@ function BS:OnInitialize()
 end
 
 function BS:OnEnable()
+    if OUI.IsModuleEnabled and not OUI:IsModuleEnabled("OUI_BlizzardSkin") then return end
     self:SetupTooltips()
     self:SetupContextMenus()
     self:SetupStaticPopups()

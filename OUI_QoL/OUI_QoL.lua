@@ -93,6 +93,7 @@ local function setupScreenshot()
     if QL._ssDone then return end
     QL._ssDone = true
 
+    -- Source-level suppression where the text matches exactly (cleanest, no flash)
     if type(ActionStatus_DisplayMessage) == "function" then
         local orig = ActionStatus_DisplayMessage
         ActionStatus_DisplayMessage = function(text, ...)
@@ -100,7 +101,6 @@ local function setupScreenshot()
             return orig(text, ...)
         end
     end
-
     if UIErrorsFrame and UIErrorsFrame.AddMessage then
         local orig = UIErrorsFrame.AddMessage
         UIErrorsFrame.AddMessage = function(self, msg, ...)
@@ -109,16 +109,21 @@ local function setupScreenshot()
         end
     end
 
+    -- Backstop (text-independent): on a screenshot, keep the ActionStatus frame
+    -- hidden for a short window. A single Hide missed the first screenshot
+    -- (the frame fades/holds over several frames); a brief ticker covers it and
+    -- works regardless of which function set the message or its exact text.
     local f = CreateFrame("Frame")
     QL._ssFrame = f
     f:RegisterEvent("SCREENSHOT_SUCCEEDED")
     f:RegisterEvent("SCREENSHOT_FAILED")
     f:SetScript("OnEvent", function()
         if not cfg("hideScreenshotMsg") then return end
-        if ActionStatus then ActionStatus:Hide() end
-        C_Timer.After(0, function()
-            if cfg("hideScreenshotMsg") and ActionStatus then ActionStatus:Hide() end
-        end)
+        if QL._ssTicker then QL._ssTicker:Cancel() end
+        QL._ssTicker = C_Timer.NewTicker(0.03, function()
+            if ActionStatus then ActionStatus:Hide() end
+            if _G.ActionStatusText and _G.ActionStatusText.SetText then _G.ActionStatusText:SetText("") end
+        end, 30)  -- ~0.9s, covers the show/fade/hold
     end)
 end
 
@@ -580,6 +585,7 @@ function QL:OnInitialize()
 end
 
 function QL:OnEnable()
+    if OUI.IsModuleEnabled and not OUI:IsModuleEnabled("OUI_QoL") then return end
     setupScreenshot()
     setupCinematics()
     setupQuickLoot()

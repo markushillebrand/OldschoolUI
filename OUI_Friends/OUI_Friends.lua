@@ -872,8 +872,32 @@ function FR:OnInitialize()
 end
 
 function FR:OnEnable()
+    if OUI.IsModuleEnabled and not OUI:IsModuleEnabled("OUI_Friends") then return end
     if not cfg("enabled") then return end
-    -- MoP Classic event names (FRIENDLIST_UPDATE, not FRIEND_LIST_UPDATE); guard
+
+    if not FR._moverReg and OUI.RegisterUnlockElements and OUI.MakeUnlockElement then
+        FR._moverReg = true
+        OUI:RegisterUnlockElements({ OUI.MakeUnlockElement({
+            key = "OUIFriends", label = "Friends", group = "Friends", order = 560,
+            getFrame = function() return _G.OUIFriendsFrame end,
+            getSize  = function() local f = _G.OUIFriendsFrame
+                return (f and f:GetWidth()) or 320, (f and f:GetHeight()) or 420 end,
+            isHidden = function() local f = _G.OUIFriendsFrame; return not (f and f:IsShown()) end,
+            savePos  = function(_, _, _, x, y)
+                ns.db.profile.point, ns.db.profile.relPoint = "CENTER", "CENTER"
+                ns.db.profile.x, ns.db.profile.y = x, y
+                local f = _G.OUIFriendsFrame
+                if f then f:ClearAllPoints(); f:SetPoint("CENTER", UIParent, "CENTER", x, y) end
+            end,
+            applyPos = function()
+                local f = _G.OUIFriendsFrame
+                if f then f:ClearAllPoints()
+                    f:SetPoint(ns.db.profile.point or "CENTER", UIParent,
+                        ns.db.profile.relPoint or "CENTER", ns.db.profile.x or 0, ns.db.profile.y or 0) end
+            end,
+        }) })
+    end
+
     -- each registration so an unsupported event can't abort the rest of setup.
     for _, ev in ipairs({
         "FRIENDLIST_UPDATE", "BN_FRIEND_INFO_CHANGED", "BN_FRIEND_LIST_SIZE_CHANGED",

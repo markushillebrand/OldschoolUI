@@ -608,6 +608,7 @@ local ev = CreateFrame("Frame")
 ev:RegisterEvent("PLAYER_LOGIN")
 ev:SetScript("OnEvent", function(self, event, a, b)
     if event == "PLAYER_LOGIN" then
+        if OldschoolUI.IsModuleEnabled and not OldschoolUI:IsModuleEnabled("OUI_LootRoll") then return end
         EnsureDB()
         EnsureAnchor()
         if DB().enabled then

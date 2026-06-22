@@ -824,6 +824,7 @@ function RF:OnInitialize()
 end
 
 function RF:OnEnable()
+    if OUI.IsModuleEnabled and not OUI:IsModuleEnabled("OUI_RaidFrames") then return end
     self:ApplyLayout()
     self:HideBlizzardParty()
     self:RegisterMover()

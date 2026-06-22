@@ -83,6 +83,8 @@ local DEFS = {
     { key = "might",  class = "PALADIN",     name = "Blessing of Might",     cast = 19740,  buffs = { 19740 }, check = "raid", cat = "raidBuffs" },
     { key = "legacy", class = "MONK",        name = "Legacy of the Emperor", cast = 115921, buffs = { 115921 },check = "raid", cat = "raidBuffs" },
     { key = "horn",   class = "DEATHKNIGHT", name = "Horn of Winter",        cast = 57330,  buffs = { 57330 }, check = "raid", cat = "raidBuffs" },
+    { key = "motw",   class = "DRUID",       name = "Mark of the Wild",      cast = 1126,   buffs = { 1126 },   check = "raid", cat = "raidBuffs" },
+    { key = "dintent",class = "WARLOCK",     name = "Dark Intent",           cast = 109773, buffs = { 109773 }, check = "raid", cat = "raidBuffs" },
     -- ---- Self auras / forms / stances --------------------------------------
     { key = "shadowform",     class = "PRIEST",  spec = 3, name = "Shadowform",        cast = 15473, buffs = { 15473 }, check = "self", cat = "selfAuras" },
     { key = "def_stance",     class = "WARRIOR", name = "Defensive Stance",  cast = 71,   buffs = { 71 },   check = "self", cat = "selfAuras" },
@@ -98,8 +100,8 @@ local DEFS = {
     { key = "pet", class = "WARLOCK", name = "Summon Demon", cast = 688, check = "pet", action = "none", cat = "pets" },
     -- ---- Consumables -------------------------------------------------------
     { key = "flask", name = "Flask", check = "consumable", cat = "consumables", action = "item",
-      buffs = { 105617, 105689, 105696, 105691, 105693 },   -- MoP flask buffs (verify)
-      items = { 76087, 76084, 76088, 76085, 76086 },         -- MoP flask items (verify)
+      buffs = { 105689, 105691, 105693, 105694, 105696 },   -- MoP flasks: Agi/Int/Str/Spirit/Stam
+      items = { 76087, 76084, 76088, 76085, 76086 },         -- MoP flask items (Int/Agi/Stam/Str/Spirit)
       icon  = "Interface\\Icons\\inv_alchemy_endlessflask_06" },
     { key = "food", name = "Well Fed", check = "wellfed", cat = "consumables", action = "none",
       icon = "Interface\\Icons\\inv_misc_food_15" },
@@ -526,6 +528,7 @@ function ABR:OnInitialize()
 end
 
 function ABR:OnEnable()
+    if OUI.IsModuleEnabled and not OUI:IsModuleEnabled("OUI_AuraBuffReminders") then return end
     self:RegisterMover()
 
     self:RegisterEvent("PLAYER_ENTERING_WORLD", "RequestRefresh")

@@ -297,7 +297,31 @@ function CH:OnInitialize()
 end
 
 function CH:OnEnable()
+    if OUI.IsModuleEnabled and not OUI:IsModuleEnabled("OUI_Chat") then return end
     if not cfg("enabled") then return end
+
+    -- /ouimove: drag the main chat window (the dock follows ChatFrame1).
+    -- Blizzard persists chat-frame positions itself, so applyPos is a no-op.
+    if not CH._moverReg and OUI.RegisterUnlockElements and OUI.MakeUnlockElement then
+        CH._moverReg = true
+        OUI:RegisterUnlockElements({ OUI.MakeUnlockElement({
+            key = "OUIChat", label = "Chat", group = "Chat", order = 550,
+            getFrame = function() return _G.ChatFrame1 end,
+            getSize  = function()
+                local cf = _G.ChatFrame1
+                return (cf and cf:GetWidth()) or 380, (cf and cf:GetHeight()) or 180
+            end,
+            isHidden = function() return false end,
+            savePos  = function(_, _, _, x, y)
+                local cf = _G.ChatFrame1
+                if cf then
+                    cf:SetMovable(true); if cf.SetUserPlaced then cf:SetUserPlaced(true) end
+                    cf:ClearAllPoints(); cf:SetPoint("CENTER", UIParent, "CENTER", x, y)
+                end
+            end,
+            applyPos = function() end,
+        }) })
+    end
 
     -- Restore history as early as possible (now, during the login phase) so the
     -- replayed scrollback sits above addon login messages rather than below.

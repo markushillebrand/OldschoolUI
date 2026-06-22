@@ -80,70 +80,69 @@ local VIS_ORDER      = { "always", "mouseover", "never" }
 local SIDE_VALUES    = { LEFT = "Left", RIGHT = "Right" }
 local SIDE_ORDER     = { "LEFT", "RIGHT" }
 
+local function buildGeneral(page)
+    Toggle(page, "Enable chat skinning", "enabled")
+    Toggle(page, "Hide Blizzard chat buttons", "hideDefaultButtons",
+        "Hide the default chat menu, channel, quick-join and voice buttons.")
+    Header(page, "Appearance")
+    Toggle(page, "Show Background", "showBackground")
+    Color(page, "Background Color", "bgColor")
+    Toggle(page, "Show Border", "showBorder")
+    Color(page, "Border Color", "borderColor")
+    Toggle(page, "Text Shadow", "shadow")
+    Toggle(page, "Use Suite Outline", "useSuiteOutline",
+        "Follow the suite-wide font outline. Turn off to pick one below.")
+    Dropdown(page, "Outline", "outline", OUTLINE_VALUES, OUTLINE_ORDER, "")
+    Toggle(page, "Override Font Size", "useGlobalFontSize",
+        "Force one font size on all chat windows instead of their own.")
+    Slider(page, "Font Size", "fontSize", 8, 24, 1, 13)
+end
+
+local function buildWindow(page)
+    Toggle(page, "Style Tabs", "styleTabs")
+    Toggle(page, "Style Edit Box", "styleEditBox")
+    Dropdown(page, "Edit Box Position", "editBoxPosition", EDITPOS_VALUES, EDITPOS_ORDER, "BOTTOM")
+    Header(page, "Idle Fade")
+    Toggle(page, "Enable Idle Fade", "idleFadeEnabled")
+    Slider(page, "Fade Delay (s)", "idleFadeDelay", 1, 60, 1, 15)
+    Slider(page, "Fade Strength (%)", "idleFadeStrength", 0, 99, 1, 40,
+        "How much to fade when idle. 0 = no fade, 99 = almost invisible.")
+    Toggle(page, "Stay Visible in Combat", "fadeStayInCombat")
+end
+
+local function buildTools(page)
+    Toggle(page, "Show Copy Button", "showCopyButton",
+        "A hover button to copy the chat. /ouicopy also works.")
+    Toggle(page, "Clickable URLs", "clickableURLs",
+        "Make links in incoming messages clickable (opens a copy popup).")
+    Header(page, "History")
+    Toggle(page, "Persist Chat History", "persistChatHistory",
+        "Restore recent scrollback after a /reload or relog. /ouichatwipe clears it.")
+    Slider(page, "Max History Lines", "persistChatHistoryMaxLines", 20, 500, 10, 100)
+end
+
+local function buildSidebar(page)
+    Toggle(page, "Enable Sidebar", "sidebarEnabled")
+    Dropdown(page, "Visibility", "sidebarVisibility", VIS_VALUES, VIS_ORDER, "mouseover")
+    Dropdown(page, "Side", "sidebarSide", SIDE_VALUES, SIDE_ORDER, "LEFT")
+    Slider(page, "Icon Size", "sidebarIconSize", 12, 40, 1, 20)
+    Slider(page, "Icon Spacing", "sidebarSpacing", 0, 16, 1, 6)
+    Toggle(page, "Sidebar Background", "sidebarBg")
+    Toggle(page, "Button: Copy Chat", "sidebarShowCopy")
+    Toggle(page, "Button: Friends", "sidebarShowFriends")
+    Toggle(page, "Button: Guild", "sidebarShowGuild")
+    Toggle(page, "Button: Calendar", "sidebarShowCalendar")
+    Toggle(page, "Button: Dungeon Finder", "sidebarShowLFD")
+end
+
 OUI:RegisterModule("OUI_Chat", {
     category    = "Better UI Module", order = 25,
     title       = "Chat",
     description = "Chat skinning, idle fade, copy & clickable URLs, persistent history and a sidebar.",
-    build = function(page)
-        ---------------------------------------------------------------- GENERAL
-        Header(page, "General")
-        Toggle(page, "Enable chat skinning", "enabled")
-        Toggle(page, "Hide Blizzard chat buttons", "hideDefaultButtons",
-            "Hide the default chat menu, channel, quick-join and voice buttons.")
-
-        ------------------------------------------------------------- APPEARANCE
-        Header(page, "Appearance")
-        Toggle(page, "Show Background", "showBackground")
-        Color(page, "Background Color", "bgColor")
-        Toggle(page, "Show Border", "showBorder")
-        Color(page, "Border Color", "borderColor")
-        Toggle(page, "Text Shadow", "shadow")
-        Toggle(page, "Use Suite Outline", "useSuiteOutline",
-            "Follow the suite-wide font outline. Turn off to pick one below.")
-        Dropdown(page, "Outline", "outline", OUTLINE_VALUES, OUTLINE_ORDER, "")
-        Toggle(page, "Override Font Size", "useGlobalFontSize",
-            "Force one font size on all chat windows instead of their own.")
-        Slider(page, "Font Size", "fontSize", 8, 24, 1, 13)
-
-        ------------------------------------------------------- TABS & EDIT BOX
-        Header(page, "Tabs & Edit Box")
-        Toggle(page, "Style Tabs", "styleTabs")
-        Toggle(page, "Style Edit Box", "styleEditBox")
-        Dropdown(page, "Edit Box Position", "editBoxPosition", EDITPOS_VALUES, EDITPOS_ORDER, "BOTTOM")
-
-        -------------------------------------------------------------- IDLE FADE
-        Header(page, "Idle Fade")
-        Toggle(page, "Enable Idle Fade", "idleFadeEnabled")
-        Slider(page, "Fade Delay (s)", "idleFadeDelay", 1, 60, 1, 15)
-        Slider(page, "Fade Strength (%)", "idleFadeStrength", 0, 99, 1, 40,
-            "How much to fade when idle. 0 = no fade, 99 = almost invisible.")
-        Toggle(page, "Stay Visible in Combat", "fadeStayInCombat")
-
-        --------------------------------------------------------- TEXT UTILITIES
-        Header(page, "Text Utilities")
-        Toggle(page, "Show Copy Button", "showCopyButton",
-            "A hover button to copy the chat. /ouicopy also works.")
-        Toggle(page, "Clickable URLs", "clickableURLs",
-            "Make links in incoming messages clickable (opens a copy popup).")
-
-        ------------------------------------------------------------------ HISTORY
-        Header(page, "History")
-        Toggle(page, "Persist Chat History", "persistChatHistory",
-            "Restore recent scrollback after a /reload or relog. /ouichatwipe clears it.")
-        Slider(page, "Max History Lines", "persistChatHistoryMaxLines", 20, 500, 10, 100)
-
-        ------------------------------------------------------------------ SIDEBAR
-        Header(page, "Sidebar")
-        Toggle(page, "Enable Sidebar", "sidebarEnabled")
-        Dropdown(page, "Visibility", "sidebarVisibility", VIS_VALUES, VIS_ORDER, "mouseover")
-        Dropdown(page, "Side", "sidebarSide", SIDE_VALUES, SIDE_ORDER, "LEFT")
-        Slider(page, "Icon Size", "sidebarIconSize", 12, 40, 1, 20)
-        Slider(page, "Icon Spacing", "sidebarSpacing", 0, 16, 1, 6)
-        Toggle(page, "Sidebar Background", "sidebarBg")
-        Toggle(page, "Button: Copy Chat", "sidebarShowCopy")
-        Toggle(page, "Button: Friends", "sidebarShowFriends")
-        Toggle(page, "Button: Guild", "sidebarShowGuild")
-        Toggle(page, "Button: Calendar", "sidebarShowCalendar")
-        Toggle(page, "Button: Dungeon Finder", "sidebarShowLFD")
-    end,
+    tabs = {
+        { title = "General",        build = buildGeneral },
+        { title = "Window & Input", build = buildWindow },
+        { title = "Tools",          build = buildTools },
+        { title = "Sidebar",        build = buildSidebar },
+    },
 })

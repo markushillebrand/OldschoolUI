@@ -47,6 +47,41 @@ local function S()
 end
 
 -------------------------------------------------------------------------------
+--  Debug tracker (ring buffer) -- helps diagnose why our own roll button
+--  doesn't fire. Inspect with /ouibonus log.
+-------------------------------------------------------------------------------
+local bonusLog = {}
+local function LogBonus(fmt, ...)
+    local line = select("#", ...) > 0 and fmt:format(...) or fmt
+    bonusLog[#bonusLog + 1] = ("|cff888888[%s]|r %s"):format(date("%H:%M:%S"), line)
+    if #bonusLog > 80 then table.remove(bonusLog, 1) end
+end
+ns.LR_LogBonus = LogBonus
+
+-- snapshot of the native BonusRollFrame + its Roll button
+local function LogNativeState(tag)
+    local b = _G.BonusRollFrame
+    if not b then LogBonus("%s BonusRollFrame=nil", tag); return end
+    local shown = b.IsShown and b:IsShown()
+    local reg   = b.IsEventRegistered and b:IsEventRegistered("SPELL_CONFIRMATION_PROMPT")
+    local pt    = b.GetPoint and select(1, b:GetPoint())
+    local alpha = b.GetAlpha and b:GetAlpha()
+    local pf    = b.PromptFrame
+    local rb    = pf and (pf.Roll or pf.RollButton or pf.rollButton)
+    local rbName = rb and rb.GetName and rb:GetName()
+    LogBonus("%s shown=%s reg=%s point=%s alpha=%.2f promptFrame=%s rollBtn=%s(%s) rbShown=%s",
+        tag, tostring(shown), tostring(reg), tostring(pt), tonumber(alpha) or -1,
+        tostring(pf ~= nil), tostring(rb ~= nil), tostring(rbName or "?"),
+        tostring(rb and rb.IsShown and rb:IsShown()))
+end
+
+-- prefer Blizzard's own bonus-roll UI? (default true -- our panel is opt-in)
+local function UseNativeRoll()
+    local s = S()
+    return (not s) or s.useNativeBonusRoll ~= false
+end
+
+-------------------------------------------------------------------------------
 --  Boss context tracking
 -------------------------------------------------------------------------------
 local bonusRegDone      -- guard: register BonusRollFrame once
@@ -186,6 +221,7 @@ ns.LR_CurrentBoss = CurrentBoss
 -------------------------------------------------------------------------------
 local rollPanel          -- our visible panel (lazy-built)
 local rollExpiresAt = 0  -- GetTime() deadline for the countdown
+local rollWiredTo        -- native Roll button our secure forward is wired to (set OOC)
 
 local function FindNativeRollButton()
     local brf = _G.BonusRollFrame
@@ -245,7 +281,11 @@ local function BuildRollPanel()
     end
     roll:SetScript("OnEnter", function() rbg:SetColorTexture(ACC.r * 0.5, ACC.g * 0.5, ACC.b * 0.5, 1) end)
     roll:SetScript("OnLeave", function() rbg:SetColorTexture(ACC.r * 0.30, ACC.g * 0.30, ACC.b * 0.30, 0.95) end)
-    roll:SetScript("PostClick", function() f:Hide(); rollExpiresAt = 0 end)
+    roll:SetScript("PostClick", function()
+        LogBonus("PostClick: our Roll button clicked (clickbutton=%s)",
+            tostring(roll:GetAttribute("clickbutton")))
+        f:Hide(); rollExpiresAt = 0
+    end)
     f.roll = roll
 
     f:SetScript("OnUpdate", function(self)
@@ -259,13 +299,41 @@ local function BuildRollPanel()
     return f
 end
 
+-- Pre-wire (OUT OF COMBAT) our secure forward button to the native Roll
+-- button. SetAttribute is blocked in combat, and bonus-roll prompts almost
+-- always arrive in combat -- so we wire ahead of time; the in-combat prompt
+-- then only needs to :Show() the (already-wired) panel, and clicking forwards.
+local function WireRollButton()
+    if InCombatLockdown() then return false end
+    local rb = FindNativeRollButton()
+    if not rb then return false end
+    local f = BuildRollPanel()
+    if rollWiredTo ~= rb then
+        f.roll:SetAttribute("type", "click")
+        f.roll:SetAttribute("clickbutton", rb)
+        rollWiredTo = rb
+        LogBonus("WireRollButton: clickbutton pre-wired OOC to native Roll button")
+    end
+    return true
+end
+ns.LR_WireBonusRoll = WireRollButton
+
 local function ShowRollPanel(duration)
     local f  = BuildRollPanel()
     local rb = FindNativeRollButton()
-    if not rb then return false end          -- nothing to forward to
-    if not InCombatLockdown() then
-        f.roll:SetAttribute("type", "click")
-        f.roll:SetAttribute("clickbutton", rb)
+    local combat = InCombatLockdown()
+    LogBonus("ShowRollPanel: nativeRollBtn=%s combat=%s preWired=%s",
+        tostring(rb ~= nil), tostring(combat), tostring(rollWiredTo ~= nil))
+    if not combat then
+        -- OOC: wire now (covers the case where this prompt arrived out of combat)
+        WireRollButton()
+    elseif not rollWiredTo then
+        -- in combat and never pre-wired -> can't SetAttribute now; button is inert
+        LogBonus("  -> in combat & not pre-wired: button inert this prompt (native fallback advised)")
+    end
+    if not rb and not rollWiredTo then
+        LogBonus("  -> ABORT: no native Roll button to forward to")
+        return false
     end
     rollExpiresAt = GetTime() + ((duration and duration > 0) and duration or 30)
     f:Show()
@@ -277,6 +345,25 @@ local function HideRollPanel()
     if rollPanel then rollPanel:Hide() end
 end
 ns.LR_HideBonusPanel = HideRollPanel
+
+-- Surface Blizzard's own bonus-roll frame (its native, fully-secure Roll
+-- button) instead of our forwarding panel. The frame handles the prompt via
+-- its own registration; we only make sure it is on-screen and never show ours.
+local function ShowNativeRoll()
+    HideRollPanel()
+    local b = _G.BonusRollFrame
+    if b then
+        if not InCombatLockdown() then
+            if b.ClearAllPoints and (not (b.GetPoint and b:GetPoint())) then
+                b:ClearAllPoints()
+                b:SetPoint("TOP", UIParent, "TOP", 0, -200)
+            end
+            if b.SetAlpha then b:SetAlpha(1) end
+        end
+        if b.Show then b:Show() end
+    end
+    LogNativeState("ShowNativeRoll")
+end
 
 -------------------------------------------------------------------------------
 --  Bonus rolls are presented and accepted by Blizzard's own BonusRollFrame
@@ -295,6 +382,7 @@ ev:RegisterEvent("BONUS_ROLL_RESULT")
 ev:RegisterEvent("BONUS_ROLL_FAILED")
 ev:RegisterEvent("SPELL_CONFIRMATION_PROMPT")
 ev:RegisterEvent("SPELL_CONFIRMATION_TIMEOUT")
+ev:RegisterEvent("PLAYER_REGEN_ENABLED")
 ev:SetScript("OnEvent", function(_, event, ...)
     if event == "PLAYER_LOGIN" then
         CDB()  -- ensure the store exists
@@ -324,6 +412,20 @@ ev:SetScript("OnEvent", function(_, event, ...)
             brf:HookScript("OnShow", placeBonus)
             placeBonus(brf)
         end
+        -- Pre-wire our secure forward button now (OOC). The native Roll button
+        -- may not exist until the first prompt, so retry shortly after login.
+        WireRollButton()
+        if C_Timer and C_Timer.After then
+            C_Timer.After(3, WireRollButton)
+            C_Timer.After(8, WireRollButton)
+        end
+        return
+    end
+
+    if event == "PLAYER_REGEN_ENABLED" then
+        -- Leaving combat is our chance to (re)wire for the NEXT bonus-roll
+        -- prompt, since SetAttribute is blocked while in combat.
+        WireRollButton()
         return
     end
 
@@ -339,31 +441,42 @@ ev:SetScript("OnEvent", function(_, event, ...)
     if event == "BONUS_ROLL_RESULT" then
         HideRollPanel()
         local typeIdentifier, itemLink, quantity, _, _, _, currencyID = ...
+        LogBonus("BONUS_ROLL_RESULT type=%s qty=%s", tostring(typeIdentifier), tostring(quantity))
         Record(typeIdentifier, itemLink, quantity, currencyID)
         return
     end
 
     if event == "BONUS_ROLL_FAILED" then
         HideRollPanel()
+        LogBonus("BONUS_ROLL_FAILED")
         Record("money", nil, 0)
         return
     end
 
     if event == "SPELL_CONFIRMATION_PROMPT" then
         local spellID, confirmType, duration = ...
+        LogBonus("SPELL_CONFIRMATION_PROMPT spellID=%s confirmType=%s dur=%s (bonusType=%s)",
+            tostring(spellID), tostring(confirmType), tostring(duration), tostring(BONUS_ROLL_CONFIRM_TYPE))
         if confirmType == BONUS_ROLL_CONFIRM_TYPE then
-            -- reminder / auto-ignore first; if it auto-declined, don't show a panel
+            LogNativeState("on prompt")
+            -- reminder / auto-ignore first; if it auto-declined, don't show anything
             local declined = HandleBonusPrompt(spellID, CurrentBoss())
+            LogBonus("auto-declined=%s useNative=%s", tostring(declined), tostring(UseNativeRoll()))
             if not declined then
-                local dur = tonumber(duration)
-                if dur and dur > 1000 then dur = dur / 1000 end  -- ms -> s
-                ShowRollPanel((dur and dur > 0) and dur or 30)
+                if UseNativeRoll() then
+                    ShowNativeRoll()
+                else
+                    local dur = tonumber(duration)
+                    if dur and dur > 1000 then dur = dur / 1000 end  -- ms -> s
+                    ShowRollPanel((dur and dur > 0) and dur or 30)
+                end
             end
         end
         return
     end
 
     if event == "SPELL_CONFIRMATION_TIMEOUT" then
+        LogBonus("SPELL_CONFIRMATION_TIMEOUT")
         HideRollPanel()
         return
     end
@@ -409,9 +522,32 @@ SlashCmdList["OUILRBONUS"] = function(msg)
         p("BONUS_ROLL_CONFIRM_TYPE = " .. tostring(BONUS_ROLL_CONFIRM_TYPE))
         return
     end
-    if msg == "clear" then
-        ns.LR_ClearBonusHistory()
-        p(ns.LR_T("history cleared."))
+    if msg == "log" or msg == "log clear" then
+        if msg == "log clear" then
+            wipe(bonusLog)
+            p("debug log cleared.")
+            return
+        end
+        if #bonusLog == 0 then
+            p("debug log empty. Trigger a bonus roll, then run /ouibonus log.")
+        else
+            p(("debug log (%d lines, newest last):"):format(#bonusLog))
+            for i = 1, #bonusLog do print("  " .. bonusLog[i]) end
+        end
+        LogNativeState("now")
+        print("  " .. bonusLog[#bonusLog])
+        return
+    end
+    if msg == "native" or msg == "panel off" then
+        local s = S(); if s then s.useNativeBonusRoll = true end
+        p("switched to Blizzard's native bonus-roll button.")
+        return
+    end
+    if msg == "ourpanel" or msg == "panel on" then
+        local s = S(); if s then s.useNativeBonusRoll = false end
+        local wired = WireRollButton()
+        p("switched to the OUI bonus-roll panel." ..
+            (wired and " (button pre-wired)" or " (will wire out of combat)"))
         return
     end
     if msg == "test" then

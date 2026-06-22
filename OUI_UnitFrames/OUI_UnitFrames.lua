@@ -170,6 +170,21 @@ local function MakeAuraIcon(parent, font)
     b.count:SetFont(font, 10, "OUTLINE")
     b.count:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", 1, 0)
     if OUI.PP and OUI.PP.CreateBorder then OUI.PP.CreateBorder(b, 0, 0, 0, 0.9) end
+    -- hover tooltip (unit/index/filter are stamped on the button in UpdateAuras)
+    b:EnableMouse(true)
+    b:SetScript("OnEnter", function(self)
+        if not (self._unit and self._index) then return end
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        if GameTooltip.SetUnitAura then
+            GameTooltip:SetUnitAura(self._unit, self._index, self._filter)
+        elseif self._filter == "HARMFUL" then
+            GameTooltip:SetUnitDebuff(self._unit, self._index)
+        else
+            GameTooltip:SetUnitBuff(self._unit, self._index)
+        end
+        GameTooltip:Show()
+    end)
+    b:SetScript("OnLeave", function() GameTooltip:Hide() end)
     return b
 end
 
@@ -262,6 +277,7 @@ function UF:UpdateAuras(f, group)
         shown = shown + 1
         local b = group.pool[shown]
         if not b then b = MakeAuraIcon(group, font); group.pool[shown] = b end
+        b._unit, b._index, b._filter = f.unit, i, group.filter
         b:SetSize(size, size)
         b.icon:SetTexture(icon)
         if cfg.auraShowCount ~= false and count and count > 1 then
@@ -814,6 +830,7 @@ function UF:HideBlizzardFrames()
 end
 
 function UF:OnEnable()
+    if OUI.IsModuleEnabled and not OUI:IsModuleEnabled("OUI_UnitFrames") then return end
     self:ApplyAll()
     self:HideBlizzardFrames()
     self:RegisterMovers()

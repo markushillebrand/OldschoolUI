@@ -1011,6 +1011,7 @@ function CS:Build()
     ttext:SetFont(fontPath(), 14, ""); ttext:SetPoint("LEFT", 10, 0)
     ttext:SetText(UnitName("player") or L("Character")); ttext:SetTextColor(ac())
     f._title = ttext
+    if OUI.StyleHeader then OUI.StyleHeader(title, { title = ttext, layer = "ARTWORK", sublevel = 3 }) end
 
     local close = CreateFrame("Button", nil, title)
     close:SetSize(20, 20); close:SetPoint("RIGHT", -6, 0)

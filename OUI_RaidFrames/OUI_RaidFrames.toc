@@ -1,7 +1,7 @@
 ## Interface: 50504
 ## Title: OldschoolUI Raid Frames
 ## Author: Lyonthedragon
-## Version: @project-version@
+## Version: 1.0.0
 ## Notes: Party and raid member frames.
 ## Dependencies: OldschoolUI
 ## SavedVariables: OldschoolUIRaidFramesDB

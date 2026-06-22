@@ -9,7 +9,7 @@
 --   * Use  L["Some Term"] = true  to deliberately keep the English text.
 --
 -- This is a seed/reference locale (the most common, highest-frequency strings).
--- Run /euiloc dump deDE in-game to generate the full remaining key list.
+-- Run /ouiloc dump deDE in-game to generate the full remaining key list.
 
 local L = OldschoolUI.RegisterLocale("deDE")
 if not L then return end
@@ -1608,7 +1608,7 @@ L["Roll Counts"]                 = "Würfelzähler"
 L["Quality Border"]              = "Qualitäts-Rahmen"
 L["Can't Roll"]                  = "Würfeln nicht möglich"
 L["Sim Epic Sword"]              = "Sim: Episches Schwert"
-L["Reposition this element in Unlock Mode. Preview with /euilr test."] = "Im Entsperrmodus verschieben. Vorschau mit /euilr test."
+L["Reposition this element in Unlock Mode. Preview with /ouilr test."] = "Im Entsperrmodus verschieben. Vorschau mit /ouilr test."
 L["Custom group loot roll bars: countdown, roll tally, disenchant button, mover."] = "Eigene Beute-Würfel-Leisten: Countdown, Würfelzähler, Entzaubern-Button, Mover."
 L["Replace Blizzard's default loot roll frame with OUI bars. Toggling off requires a /reload to restore Blizzard's frame."] = "Ersetzt Blizzards Standard-Würfelfenster durch OUI-Leisten. Zum Deaktivieren ist ein /reload nötig, um Blizzards Fenster wiederherzustellen."
 L["Show the Disenchant roll button when available."] = "Zeigt den Entzaubern-Würfelknopf, wenn verfügbar."
@@ -2688,3 +2688,163 @@ L["Call Pet"] = "Tier rufen"
 L["Flask"] = "Fläschchen"
 L["Well Fed"] = "Sättigung"
 L["Healthstone"] = "Gesundheitsstein"
+
+-- LootRoll: native bonus-roll toggle
+L["Use Blizzard's Bonus-Roll Button"] = "Blizzards Bonuswurf-Button verwenden"
+L["Show Blizzard's own bonus-roll frame instead of the OUI panel. Leave this on if the OUI roll button isn't working. (/ouibonus log shows debug info.)"] = "Zeigt Blizzards eigenes Bonuswurf-Fenster statt des OUI-Panels. Lass dies an, falls der OUI-Würfeln-Button nicht funktioniert. (/ouibonus log zeigt Debug-Infos.)"
+
+-- DamageMeter: target breakdown
+L["Targets"] = "Ziele"
+L["All targets"] = "Alle Ziele"
+L["by target"] = "nach Ziel"
+L["Share"] = "Anteil"
+L["Click: spell breakdown for this target"] = "Klick: Zauberaufschlüsselung für dieses Ziel"
+
+-- GroupTimer (MT-1 minimal options)
+L["Group Timer"] = "Gruppen-Timer"
+L["Enable Group Timer"] = "Gruppen-Timer aktivieren"
+L["Run timer for Challenge Mode, Heroic dungeons and raids: tracks per-boss splits, best times and deaths. (Toggling requires /reload.)"] = "Run-Timer für Herausforderungsmodus, heroische Dungeons und Schlachtzüge: erfasst Splits pro Boss, Bestzeiten und Tode. (Umschalten erfordert /reload.)"
+L["Move the timer with /ouimove. Full settings (timer colours, objectives, stats) come in a later pass."] = "Timer mit /ouimove verschieben. Vollständige Einstellungen (Timer-Farben, Ziele, Statistik) folgen in einem späteren Durchlauf."
+
+-- GroupTimer UI (MT-3..5)
+L["Best"] = "Beste"
+L["best"] = "Best"
+L["Best completion"] = "Beste Abschlusszeit"
+L["Best time to boss"] = "Beste Zeit bis Boss"
+L["Deaths"] = "Tode"
+L["Heroic Dungeon"] = "Heroischer Dungeon"
+L["Instances"] = "Instanzen"
+L["Left-click: statistics"] = "Linksklick: Statistik"
+L["No active run"] = "Kein aktiver Run"
+L["Recent runs"] = "Letzte Runs"
+L["Statistics"] = "Statistik"
+L["Time"] = "Zeit"
+
+-- GroupTimer: multi-day raid resume prompt
+L["This raid isn't finished. Continue it later? Choose 'Finish now' to record it as-is."] = "Dieser Raid ist nicht abgeschlossen. Später fortsetzen? Mit „Jetzt beenden“ wird er so gespeichert, wie er ist."
+L["Continue later"] = "Später fortsetzen"
+L["Finish now"] = "Jetzt beenden"
+
+-- GroupTimer options (MT-6)
+L["Best per dungeon"] = "Beste pro Dungeon"
+L["Clear statistics"] = "Statistik löschen"
+L["Compare each objective time against your stored best."] = "Vergleicht jede Ziel-Zeit mit deiner gespeicherten Bestzeit."
+L["Compare splits against"] = "Splits vergleichen mit"
+L["Delete all stored runs, best times and suspended raids?"] = "Alle gespeicherten Runs, Bestzeiten und pausierten Raids löschen?"
+L["Gold threshold colour"] = "Gold-Schwellenfarbe"
+L["History length"] = "Verlaufslänge"
+L["How many recent runs to keep per instance."] = "Wie viele letzte Runs pro Instanz behalten werden."
+L["Live run overlay"] = "Live-Run-Overlay"
+L["Move the run overlay with /ouimove."] = "Run-Overlay mit /ouimove verschieben."
+L["Open statistics"] = "Statistik öffnen"
+L["Show Gold medal timer"] = "Gold-Medaillen-Timer anzeigen"
+L["Show Silver medal timer"] = "Silber-Medaillen-Timer anzeigen"
+L["Show deaths"] = "Tode anzeigen"
+L["Show deaths in title"] = "Tode im Titel anzeigen"
+L["Show minimap button"] = "Minimap-Button anzeigen"
+L["Show run overlay"] = "Run-Overlay anzeigen"
+L["Show the live timer overlay during heroic/raid runs."] = "Zeigt das Live-Timer-Overlay während Heroic-/Raid-Runs."
+L["Silver threshold colour"] = "Silber-Schwellenfarbe"
+
+-- QuestTracker options (QT-4)
+L["Appearance"] = "Aussehen"
+L["Auto-accept quests"] = "Quests automatisch annehmen"
+L["Auto-claims quests with a single reward; multi-reward quests are left to you."] = "Nimmt Quests mit einer einzigen Belohnung automatisch ab; Quests mit Belohnungsauswahl bleiben dir überlassen."
+L["Auto-turn-in quests"] = "Quests automatisch abgeben"
+L["Backdrop"] = "Hintergrund"
+L["Backdrop colour"] = "Hintergrundfarbe"
+L["Bind a key to use your current quest item."] = "Eine Taste zum Benutzen des aktuellen Quest-Gegenstands belegen."
+L["Colour quest titles"] = "Quest-Titel einfärben"
+L["Enable Quest Tracker"] = "Quest-Tracker aktivieren"
+L["Hidden"] = "Versteckt"
+L["Hide in raid / arena"] = "In Schlachtzug/Arena ausblenden"
+L["Hold Shift to skip auto-turn-in"] = "Umschalt halten, um Auto-Abgabe zu überspringen"
+L["In combat only"] = "Nur im Kampf"
+L["In instances only"] = "Nur in Instanzen"
+L["Not set"] = "Nicht belegt"
+L["Objective font size"] = "Schriftgröße Ziele"
+L["On mouseover"] = "Bei Mausberührung"
+L["Quality of life"] = "Komfort"
+L["Quest-item hotkey"] = "Quest-Gegenstand-Taste"
+L["Quest-item key"] = "Taste für Quest-Gegenstand"
+L["Set a key, then use the watched quest item with it (out of combat binding)."] = "Taste festlegen, dann den verfolgten Quest-Gegenstand damit benutzen (Belegung außerhalb des Kampfes)."
+L["Show backdrop"] = "Hintergrund anzeigen"
+L["Show top divider"] = "Obere Trennlinie anzeigen"
+L["Skinning, visibility control and quest QoL for the objective tracker."] = "Styling, Sichtbarkeitssteuerung und Quest-Komfort für den Zielverfolger."
+L["Tie quest-title colour to the global accent colour."] = "Quest-Titelfarbe an die globale Akzentfarbe koppeln."
+L["Title colour"] = "Titelfarbe"
+L["Title font size"] = "Schriftgröße Titel"
+L["Use suite accent for titles"] = "Suite-Akzent für Titel verwenden"
+L["Press a key..."] = "Taste drücken …"
+
+-- Minimap Group-Finder queue tooltip
+L["Battleground"] = "Schlachtfeld"
+L["Click to open the Group Finder"] = "Klicken, um die Gruppensuche zu öffnen"
+L["Estimated wait"] = "Voraussichtliche Wartezeit"
+L["Group Finder"] = "Gruppensuche"
+L["Not in any queue"] = "In keiner Warteschlange"
+L["Ready check pending"] = "Bereitschaftsprüfung ausstehend"
+L["Time in queue"] = "Aktuelle Wartezeit"
+L["Unavailable"] = "Nicht verfügbar"
+
+-- Minimap queue: minute formatting
+L["%d min"] = "%d Min"
+L["< 1 minute"] = "< 1 Minute"
+
+-- Minimap LFG right-click menu
+L["Leave dungeon"] = "Dungeon verlassen"
+L["Leave queue"] = "Warteschlange verlassen"
+L["Open Group Finder"] = "Gruppensuche öffnen"
+L["Teleport into dungeon"] = "In den Dungeon teleportieren"
+L["Teleport out of dungeon"] = "Aus dem Dungeon teleportieren"
+
+-- GroupTimer live overlay
+L["done"] = "fertig"
+
+-- mover label
+L["Group Timer (Run)"] = "Gruppen-Timer (Run)"
+L["Move Frames"] = "Fenster verschieben"
+L["Lock frames"] = "Fenster sperren"
+
+-- Nameplate class power (NP-6)
+L["Class Power"] = "Klassenressource"
+L["Show Class Power"] = "Klassenressource anzeigen"
+L["Show your secondary resource (combo points, chi, holy power, runes, ...) above the enemy nameplate."] = "Zeigt deine Sekundärressource (Combopunkte, Chi, heilige Kraft, Runen, ...) über der Gegner-Namensleiste."
+L["On Target Only"] = "Nur beim Ziel"
+L["Only on your current target instead of every attackable enemy."] = "Nur beim aktuellen Ziel statt bei jedem angreifbaren Gegner."
+L["Class Power Height"] = "Höhe der Klassenressource"
+
+-- == Config-menu redesign (shell restyle) =================================
+L["CurseForge"] = true
+L["Edit Mode"] = "Bearbeitungsmodus"
+L["Reset module"] = "Modul zurücksetzen"
+L["Reset this module's settings to default?"] = "Einstellungen dieses Moduls auf Standard zurücksetzen?"
+L["This module has no reset available."] = "Für dieses Modul ist kein Zurücksetzen verfügbar."
+L["Reload required to apply"] = "Neuladen erforderlich zum Übernehmen"
+L["Click to toggle. Takes effect after Reload UI."] = "Klicken zum Umschalten. Wirkt nach „UI neu laden“."
+L["Open the project page (copy link)."] = "Projektseite öffnen (Link kopieren)."
+L["Left-click to open"] = "Linksklick zum Öffnen"
+L["Theme"] = "Thema"
+L["Accent colour"] = "Akzentfarbe"
+L["Panel scale"] = "Fenster-Skalierung"
+L["Theme, accent colour, language and panel scale."] = "Thema, Akzentfarbe, Sprache und Fenster-Skalierung."
+L["Default status-bar texture across the whole UI. Each module can override it for all of its bars, or per bar type."] = "Standard-Statusleisten-Textur für die gesamte UI. Jedes Modul kann sie für alle seine Leisten oder pro Leistentyp überschreiben."
+L["Default bar border colour across the whole UI. Modules can override per addon or per bar type."] = "Standard-Rahmenfarbe der Leisten für die gesamte UI. Module können pro Addon oder pro Leistentyp überschreiben."
+L["Brightness multiplier applied to all class colours. Modules can override locally."] = "Helligkeitsfaktor für alle Klassenfarben. Module können lokal überschreiben."
+L["Override the colour for this class across the whole UI. Right-click the swatch is not reset; use the default Blizzard colour by clearing in a future reset."] = "Überschreibt die Farbe dieser Klasse für die gesamte UI. Rechtsklick auf das Farbfeld setzt nicht zurück; die Standard-Blizzard-Farbe folgt über ein künftiges Zurücksetzen."
+L["Unlock mode ON -- drag frames, then /ouimove again to lock."] = "Entsperrmodus AN – Rahmen ziehen, dann erneut /ouimove zum Sperren."
+L["Unlock mode OFF -- positions saved."] = "Entsperrmodus AUS – Positionen gespeichert."
+L["Player Buffs"] = "Spieler-Buffs"
+-- Tab labels (config-menu tab split)
+L["List"]               = "Liste"
+L["Frames"]             = "Rahmen"
+L["Unit"]               = "Einheit"
+L["Bars"]               = "Leisten"
+L["Bar"]                = "Leiste"
+L["Window & Input"]     = "Fenster & Eingabe"
+L["Tools"]              = "Werkzeuge"
+L["Timer"]              = "Timer"
+L["Reminders"]          = "Erinnerungen"
+L["Sound & Visibility"] = "Ton & Sichtbarkeit"
+L["Session"]            = "Sitzung"
+L["Tracker & Logging"]  = "Tracker & Protokoll"
