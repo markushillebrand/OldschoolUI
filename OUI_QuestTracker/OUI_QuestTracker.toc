@@ -2,7 +2,7 @@
 ## Title: OldschoolUI |cffD9A441QuestTracker|r
 ## Notes: Skins, visibility control and quest QoL for the objective tracker.
 ## Author: Lyonthedragon
-## Version: @project-version@
+## Version: 1.0.0
 ## Dependencies: OldschoolUI
 ## SavedVariables: OldschoolUIQuestTrackerDB
 

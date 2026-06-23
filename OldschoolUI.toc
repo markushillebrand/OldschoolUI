@@ -3,7 +3,6 @@
 ## Notes: OldschoolUI - a clean MoP-Classic UI suite. Core.
 ## Author: Lyonthedragon
 ## Version: @project-version@
-## X-Curse-Project-ID: 1574573
 ## SavedVariables: OldschoolUIDB
 ## X-Category: User Interface
 ## IconTexture: Interface\AddOns\OldschoolUI\media\oui-logo

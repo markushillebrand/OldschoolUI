@@ -1,8 +1,8 @@
 -- ===========================================================================
 --  OldschoolUI -- Friends  FR-1: core window + list
 --  A clean, movable friends panel listing online WoW and Battle.net friends
---  with class-colored names, status and location. Clean-room rewrite of the
---  original dev friends module.
+--  with class-colored names, status and location. Clean-room implementation
+--  built for MoP Classic.
 -- ===========================================================================
 local ADDON, ns = ...
 local OUI = OldschoolUI

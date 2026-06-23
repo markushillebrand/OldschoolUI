@@ -63,7 +63,7 @@ local defaults = {
 }
 
 -------------------------------------------------------------------------------
---  Reminder definitions  (MoP-valid spell IDs; verify in-game via OUI_Probe)
+--  Reminder definitions  (MoP-valid spell IDs; verify in-game)
 --    key       unique id, used for enable flags + sound de-dupe
 --    class     only shown for this player class
 --    spec      optional spec index gate (C_SpecializationInfo.GetSpecialization)
@@ -237,7 +237,7 @@ local function checkBagItem(def)
     return true
 end
 
--- common MoP "Well Fed" food buffs (verify/extend in-game via OUI_Probe)
+-- common MoP "Well Fed" food buffs (verify/extend in-game)
 local WELLFED_IDS = {
     104264, 104267, 104271, 104272, 104273, 104280, 104283,
     125070, 124219, 124220, 124221, 124222, 124223, 124224,

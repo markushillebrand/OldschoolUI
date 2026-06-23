@@ -525,19 +525,36 @@ function OUI._InitGameMenuButton()
         elseif GameMenuFrame.Hide then GameMenuFrame:Hide() end
         OUI:Toggle()
     end)
+    -- Strata/level are set ONCE here, at creation (outside any secure execution).
+    -- They must NOT be set inside the GameMenu's OnShow: changing an insecure
+    -- frame's strata/level re-sorts UIParent's DIALOG children, and GameMenuFrame is
+    -- a DIALOG sibling -- that re-sort taints the menu mid-show and makes its
+    -- Logout / Exit callbacks forbidden (ADDON_ACTION_FORBIDDEN: callback()).
+    gmBtn:SetFrameStrata("DIALOG")
+    gmBtn:SetFrameLevel(200)
     gmBtn:Hide()
     GameMenuFrame:HookScript("OnShow", function()
-        gmBtn:ClearAllPoints()
-        gmBtn:SetPoint("TOP", GameMenuFrame, "BOTTOM", 0, -10)
-        gmBtn:SetFrameStrata(GameMenuFrame:GetFrameStrata())
-        gmBtn:SetFrameLevel(GameMenuFrame:GetFrameLevel() + 10)
-        gmBtn:Show()
+        -- Do NOTHING to any frame synchronously inside the secure ToggleGameMenu
+        -- execution -- only schedule. Showing/positioning gmBtn one frame later runs
+        -- in a normal, unrestricted context and cannot taint the menu. (Anchor to
+        -- UIParent, never to GameMenuFrame, for the same reason.) The deferred read
+        -- of GetHeight() also lands after the menu has laid out its buttons, so the
+        -- button is placed correctly on the very first ESC instead of the second.
+        C_Timer.After(0, function()
+            if not (gmBtn and GameMenuFrame:IsShown()) then return end
+            gmBtn:ClearAllPoints()
+            local h = (GameMenuFrame.GetHeight and GameMenuFrame:GetHeight()) or 220
+            gmBtn:SetPoint("CENTER", UIParent, "CENTER", 0, -(h / 2) - 22)
+            gmBtn:Show()
+        end)
     end)
     GameMenuFrame:HookScript("OnHide", function() if gmBtn then gmBtn:Hide() end end)
 end
 
 function OUI:_InitOptions()
     OUI.CreateMinimapButton()
+    -- Taint log confirms the gmBtn is NOT involved in the GameMenu/Logout taint
+    -- (that is a CloseSpecialWindows cascade from other addons). Re-enabled.
     OUI._InitGameMenuButton()
 end
 

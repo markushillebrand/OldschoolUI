@@ -179,7 +179,7 @@ end
 
 local function buildTools(page)
     Toggle(page, "Enable Frame Mover", "shifter",
-        "Shift+drag Blizzard windows to move them permanently; Ctrl+drag for a temporary move. Use /ouiqolreset to reset.")
+        "Shift+drag Blizzard windows to move them permanently; Ctrl+drag for a temporary move. Use /ouiqolreset to reset. Requires /reload after changing. While on it can interfere with the ESC menu and bag-item clicks.")
     Header(page, "Trainer")
     Toggle(page, "Trainer: Train All Button", "trainAllButton",
         "Add a 'Train All' button to the class trainer.")

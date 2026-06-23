@@ -2,7 +2,7 @@
 --  OldschoolUI -- Chat  CH-1: core skinning
 --  Themes the default chat frames (background, border, suite font + outline +
 --  shadow), the tabs (flat look, accent on the selected tab), the edit box and
---  the dock manager. Clean-room rewrite of the original dev chat module.
+--  the dock manager. Clean-room implementation for MoP Classic.
 -- ===========================================================================
 local ADDON, ns = ...
 local OUI = OldschoolUI

@@ -340,9 +340,15 @@ local function ShowRollPanel(duration)
     return true
 end
 
+local hidePending = false
 local function HideRollPanel()
     rollExpiresAt = 0
-    if rollPanel then rollPanel:Hide() end
+    if not rollPanel then return end
+    -- rollPanel hosts Blizzard's secure Roll button, so it is protected: hiding it
+    -- in combat (or inside a secure execution) is BLOCKED. Defer to combat end.
+    if InCombatLockdown() then hidePending = true; return end
+    hidePending = false
+    rollPanel:Hide()
 end
 ns.LR_HideBonusPanel = HideRollPanel
 
@@ -426,6 +432,7 @@ ev:SetScript("OnEvent", function(_, event, ...)
         -- Leaving combat is our chance to (re)wire for the NEXT bonus-roll
         -- prompt, since SetAttribute is blocked while in combat.
         WireRollButton()
+        if hidePending then hidePending = false; if rollPanel then rollPanel:Hide() end end
         return
     end
 

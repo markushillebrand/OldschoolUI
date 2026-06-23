@@ -61,17 +61,22 @@ local function hookFrame(frame, name)
     if not frame or hooked[name] then return end
     hooked[name] = true
 
-    if not (InCombatLockdown() and frame:IsProtected()) then
-        frame:SetMovable(true)
-        frame:SetClampedToScreen(true)
-    end
+    -- NEVER touch protected/secure Blizzard frames. Calling SetMovable/HookScript
+    -- on them taints the frame, and that taint spreads through UIParent's panel
+    -- manager to GameMenuFrame (Logout/Exit) and the ContainerFrame (bag-item
+    -- clicks) -> ADDON_ACTION_FORBIDDEN. The mover now only handles non-secure
+    -- windows; OUI's own windows already move via their headers / unlock mode.
+    if frame.IsProtected and frame:IsProtected() then return end
+
+    frame:SetMovable(true)
+    frame:SetClampedToScreen(true)
 
     local target = (DRAG_HEADERS[name] and _G[DRAG_HEADERS[name]]) or frame
     local mode  -- "save" | "temp" | nil
 
     target:HookScript("OnMouseDown", function(_, button)
         if not enabled() or button ~= "LeftButton" then return end
-        if InCombatLockdown() and frame:IsProtected() then return end
+        if frame.IsProtected and frame:IsProtected() then return end
         if IsShiftKeyDown() then mode = "save"
         elseif IsControlKeyDown() then mode = "temp"
         else return end

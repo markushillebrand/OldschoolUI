@@ -711,3 +711,50 @@ function OUI.StyleHeader(frame, opts)
     end
     return sweep
 end
+
+-- 9-slice border overlay built from a single square "picture-frame" texture
+-- (transparent center, opaque edges). Corners stay fixed-size, edges stretch --
+-- so it never distorts on thin bars. cornerFrac is the fraction of each side the
+-- corner occupies in the texture (e.g. a 64px frame with 16px corners -> 0.25).
+-- Reusable across the suite (nameplate borders, reskinned panels, ...).
+function OUI.NineSlice(parent, opts)
+    opts = opts or {}
+    local layer = opts.layer or "OVERLAY"
+    local sub   = opts.sublevel or 2
+    local obj = { _cornerFrac = opts.cornerFrac or 0.25, pieces = {} }
+    for _, k in ipairs({ "TL", "T", "TR", "L", "R", "BL", "B", "BR" }) do
+        obj.pieces[k] = parent:CreateTexture(nil, layer, nil, sub)
+        obj.pieces[k]:Hide()
+    end
+    function obj:SetTexture(path)
+        self._path = path
+        for _, t in pairs(self.pieces) do t:SetTexture(path) end
+    end
+    function obj:SetVertexColor(r, g, b, a)
+        for _, t in pairs(self.pieces) do t:SetVertexColor(r, g, b, a or 1) end
+    end
+    function obj:SetShown(s)
+        for _, t in pairs(self.pieces) do t:SetShown(s and self._path ~= nil) end
+    end
+    function obj:Hide() self:SetShown(false) end
+    -- Anchor the frame around `anchor` with `outset` px of bleed and `corner` px
+    -- corner pieces.
+    function obj:Layout(anchor, outset, corner)
+        outset = outset or 0; corner = corner or 10
+        local cf, p = self._cornerFrac, self.pieces
+        p.TL:SetTexCoord(0, cf, 0, cf);         p.TR:SetTexCoord(1 - cf, 1, 0, cf)
+        p.BL:SetTexCoord(0, cf, 1 - cf, 1);     p.BR:SetTexCoord(1 - cf, 1, 1 - cf, 1)
+        p.T:SetTexCoord(cf, 1 - cf, 0, cf);     p.B:SetTexCoord(cf, 1 - cf, 1 - cf, 1)
+        p.L:SetTexCoord(0, cf, cf, 1 - cf);     p.R:SetTexCoord(1 - cf, 1, cf, 1 - cf)
+        for _, t in pairs(p) do t:ClearAllPoints() end
+        p.TL:SetPoint("TOPLEFT",     anchor, "TOPLEFT",     -outset,  outset); p.TL:SetSize(corner, corner)
+        p.TR:SetPoint("TOPRIGHT",    anchor, "TOPRIGHT",     outset,  outset); p.TR:SetSize(corner, corner)
+        p.BL:SetPoint("BOTTOMLEFT",  anchor, "BOTTOMLEFT",  -outset, -outset); p.BL:SetSize(corner, corner)
+        p.BR:SetPoint("BOTTOMRIGHT", anchor, "BOTTOMRIGHT",  outset, -outset); p.BR:SetSize(corner, corner)
+        p.T:SetPoint("TOPLEFT", p.TL, "TOPRIGHT");    p.T:SetPoint("BOTTOMRIGHT", p.TR, "BOTTOMLEFT")
+        p.B:SetPoint("TOPLEFT", p.BL, "TOPRIGHT");    p.B:SetPoint("BOTTOMRIGHT", p.BR, "BOTTOMLEFT")
+        p.L:SetPoint("TOPLEFT", p.TL, "BOTTOMLEFT");  p.L:SetPoint("BOTTOMRIGHT", p.BL, "TOPRIGHT")
+        p.R:SetPoint("TOPRIGHT", p.TR, "BOTTOMRIGHT"); p.R:SetPoint("BOTTOMLEFT", p.BR, "TOPLEFT")
+    end
+    return obj
+end

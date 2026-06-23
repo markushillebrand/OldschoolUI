@@ -89,8 +89,15 @@ local function CreateSlot(parent, slotName)
     -- Interactive equip / unequip / swap (out of combat; hardware-event driven).
     b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     b:RegisterForDrag("LeftButton")
-    b:SetScript("OnClick", function(self)
+    b:SetScript("OnClick", function(self, button)
         if InCombatLockdown() then return end
+        -- shift + right-click: open the gem socketing UI for this slot
+        if button == "RightButton" and IsShiftKeyDown() then
+            if GetInventoryItemTexture("player", self._slotID) and SocketInventoryItem then
+                SocketInventoryItem(self._slotID)
+            end
+            return
+        end
         if IsModifiedClick and IsModifiedClick("CHATLINK") then
             local link = GetInventoryItemLink("player", self._slotID)
             if link and HandleModifiedItemClick then HandleModifiedItemClick(link) end

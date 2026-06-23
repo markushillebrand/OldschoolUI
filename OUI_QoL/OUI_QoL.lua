@@ -608,7 +608,15 @@ function QL:OnEnable()
     setupTrainAll()
     if ns.SetupBloodlust then ns.SetupBloodlust() end
     if ns.SetupAutoLogging then ns.SetupAutoLogging() end
-    if ns.SetupShifter then ns.SetupShifter() end
+    -- Only arm the frame mover when it is actually enabled: making Blizzard
+    -- UIPanels movable (SetMovable/HookScript) taints them, and that taint spreads
+    -- through UIParent's panel manager to GameMenuFrame (Logout/Exit) and the
+    -- ContainerFrame (bag-item clicks) -> ADDON_ACTION_FORBIDDEN. Default is off, so
+    -- arming it unconditionally broke ESC + bags for everyone. A /reload is needed
+    -- after toggling (taint set at login can't be cleared live).
+    -- Frame mover (Shifter): gated behind profile.shifter (default off). Taint log
+    -- confirms it was NOT the GameMenu/Logout source. Restored to normal gating.
+    if ns.SetupShifter and ns.db and ns.db.profile.shifter then ns.SetupShifter() end
 
     SLASH_OUIQOLRESET1 = "/ouiqolreset"
     SlashCmdList["OUIQOLRESET"] = function()

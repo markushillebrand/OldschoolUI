@@ -2,7 +2,7 @@
 --  OUI_Nameplates_Options.lua
 --  Config page for the nameplate module, written against the OldschoolUI
 --  options API (RegisterModule + page:AddRow + OUI.Widgets). A focused rewrite
---  of the original 7.3k-line dev-framework options: the settings users actually
+--  of the full options set: the settings users actually
 --  reach for, grouped by section. Niche per-slot offsets, the deferred class-
 --  power display, and the text-slot element pickers are intentionally omitted
 --  for now and can be layered in later. All labels are English literals routed
@@ -137,6 +137,11 @@ local function buildGeneral(page)
         set = function(v) Set("healthBarWidth", v - BAR_W); Debounce() end,
     }))
     Slider(page, "Bar Height", "healthBarHeight", 4, 40, 1, 17)
+    Dropdown(page, "Border Style", "borderStyle",
+        { line = "Line", frame = "Frame", ["frame-simple"] = "Frame (simple)",
+          ["frame-colorless"] = "Frame (colorless)", none = "None" },
+        { "line", "frame", "frame-simple", "frame-colorless", "none" }, "line",
+        "Line = thin pixel border. Frame styles are decorative; 'colorless' is tinted by Border Color.")
     Toggle(page, "Show Border", "showBorder")
     Slider(page, "Border Size", "borderSize", 0, 4, 1, 1)
     Color(page, "Border Color", "borderColor")

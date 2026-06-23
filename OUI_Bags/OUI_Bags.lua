@@ -133,6 +133,17 @@ function Bags:BuildWindow()
     f:Hide()
     f:SetMovable(true)
 
+    -- Hidden button that closes the bags; ESC is routed to it via an override
+    -- binding while the window is open (set in Open, cleared in Close). This runs
+    -- OUTSIDE the secure ToggleGameMenu/CloseSpecialWindows path, so hiding our
+    -- (protected) window is allowed and never taints the GameMenu. Unlike
+    -- EnableKeyboard on the window, an override binding does not swallow other keys,
+    -- so the bag keybind (B) keeps toggling normally.
+    local esc = CreateFrame("Button", "OUIBagsEscClose", f)
+    esc:Hide()
+    esc:SetScript("OnClick", function() Bags:Close() end)
+    self._escClose = esc
+
     local bg = f:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints(); bg:SetColorTexture(0.06, 0.06, 0.07, 0.97)
     if PP and PP.CreateBorder then PP.CreateBorder(f, 0, 0, 0, 0.9) end
@@ -395,19 +406,31 @@ end
 function Bags:IsShown() return self.win and self.win:IsShown() end
 
 function Bags:Open()
+    -- Guard against the close->reopen race: pressing B (or any contextual opener)
+    -- while open can route through ToggleBackpack/OpenAllBags and re-open the window
+    -- in the same tick that smart()/Toggle just closed it, so it never appears to
+    -- close. Ignore an Open that lands within a moment of a Close.
+    if self._closedAt and (GetTime() - self._closedAt) < 0.2 then return end
     self:BuildWindow()
     if self.win.search then self.win.search:SetText("") end  -- fresh search each open
     self.searchText = ""
     self.activeCategory = "all"                                -- start unfiltered
     self.editMode = false                                      -- start in normal use
     self.win:Show()
+    -- route ESC to close the bags while open (pcall: override-binding APIs may be
+    -- restricted in combat; failing just means ESC opens the menu instead)
+    if self._escClose then pcall(SetOverrideBindingClick, self.win, true, "ESCAPE", "OUIBagsEscClose") end
     self:UpdateGold()
     self:UpdateBagBar(true)
     if self.RefreshInventory then self:RefreshInventory() end
 end
 
 function Bags:Close()
-    if self.win then self.win:Hide() end
+    self._closedAt = GetTime()
+    if self.win then
+        if self._escClose then pcall(ClearOverrideBindings, self.win) end
+        self.win:Hide()
+    end
     self:UpdateBagBar(false)
 end
 
@@ -451,7 +474,12 @@ function Bags:HookBlizzard()
     if _G.ToggleBag then hooksecurefunc("ToggleBag", function() smart() end) end
     -- contextual openers (loot / vendor / mail) -> open only, never toggle
     if _G.OpenAllBags then hooksecurefunc("OpenAllBags", function() Bags:Open() end) end
-    if _G.CloseAllBags then hooksecurefunc("CloseAllBags", function() Bags:Close() end) end
+    -- NOTE: we deliberately do NOT hook CloseAllBags. It runs inside the secure
+    -- ToggleGameMenu execution (ESC), and our window parents SecureActionButtons, so
+    -- hiding it there is a protected action -> BLOCKED -> taints the GameMenu
+    -- (Logout/Quit forbidden). ESC-to-close is handled by the window's own keyboard
+    -- handler in BuildWindow (fires before ToggleGameMenu, hide is unrestricted
+    -- there). Closing on B / the window button still works via the Toggle hooks.
 end
 
 -- ---------------------------------------------------------------------------
@@ -497,35 +525,33 @@ end
 function Bags:_buildSlot(body, isBank)
     local holder = CreateFrame("Frame", nil, body)
     holder:SetSize(SLOT, SLOT)
-    local btn = CreateFrame("ItemButton", nil, holder, "ContainerFrameItemButtonTemplate")
+    -- Plain Button + SecureActionButtonTemplate, with the icon/count drawn by us
+    -- (the ArkInventory/Bagnon approach). We do NOT use the "ItemButton" intrinsic
+    -- nor ContainerFrameItemButtonTemplate: both ship their own OnClick that wins
+    -- over the secure handler, so on MoP Classic NO click reaches the secure action
+    -- and items can be neither used nor moved. A bare Button has no such OnClick, so
+    -- the secure type2=item attributes (set in RenderSlot) drive right-click "use",
+    -- and left-click pickup/move runs from PostClick (not protected).
+    local btn = CreateFrame("Button", nil, holder, "SecureActionButtonTemplate")
     btn:SetAllPoints(holder)
+    btn:EnableMouse(true)
     btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-    btn:RegisterForDrag("LeftButton")
+    -- Force the secure action to evaluate on the *up* edge. With the "cast on key
+    -- down" cvar active, the secure handler wants the DOWN event; since we only
+    -- register the up edge, the action would otherwise never fire and right-click
+    -- "use" does nothing (left-click only seemed to work because its pickup runs
+    -- from PostClick, which fires on up regardless of the secure handler).
+    btn:SetAttribute("useOnKeyDown", false)
     btn._holder = holder
-    -- The template's OnUpdate re-runs ContainerFrameItemButton_OnEnter every frame,
-    -- which re-resolves the tooltip via SetBagItem and can blank it (flash, then a
-    -- black frame) — for the bank's main container (-1) always, and intermittently
-    -- elsewhere. We drive the tooltip ourselves from OnEnter using the static item
-    -- link, so the template OnUpdate is removed on every slot.
-    btn:SetScript("OnUpdate", nil)
-    -- GameTooltip also calls owner:UpdateTooltip() periodically to refresh a live
-    -- tooltip; for the main bank (container -1) that re-resolves SetBagItem(-1)
-    -- into an empty tooltip (flash, then a black box). Kill it -- we set the
-    -- tooltip statically from OnEnter and never want an auto-refresh.
-    btn.UpdateTooltip = nil
 
-    -- strip template decorations via methods only (writing properties taints)
-    if btn.NewItemTexture then btn.NewItemTexture:SetAlpha(0); btn.NewItemTexture:Hide() end
-    if btn.BattlepayItemTexture then btn.BattlepayItemTexture:SetAlpha(0); btn.BattlepayItemTexture:Hide() end
-    if btn.flash then btn.flash:Hide() end
-    if btn.newitemglowAnim then btn.newitemglowAnim:Stop() end
-    if btn.NormalTexture then btn.NormalTexture:SetAlpha(0) end
-    if btn.IconBorder then btn.IconBorder:SetAlpha(0) end
-    if btn.icon then
-        btn.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-        btn.icon:ClearAllPoints(); btn.icon:SetAllPoints(btn)
-        if btn.IconMask then btn.icon:RemoveMaskTexture(btn.IconMask); btn.IconMask:Hide(); btn.IconMask:SetTexture(nil) end
-    end
+    -- our own icon (ARTWORK) + stack count (OVERLAY)
+    btn.icon = btn:CreateTexture(nil, "ARTWORK")
+    btn.icon:SetAllPoints(btn)
+    btn.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    btn.Count = btn:CreateFontString(nil, "OVERLAY")
+    btn.Count:SetFont(Font(), self.db.profile.bagCountFontSize or 11, "OUTLINE")
+    btn.Count:SetPoint("BOTTOMRIGHT", -2, 2)
+    btn.Count:SetJustifyH("RIGHT")
     -- quality border on OVERLAY (the icon sits on ARTWORK and would cover a
     -- BORDER-layer pixel border, so draw our edges above it)
     local function edge(p) local t = btn:CreateTexture(nil, "OVERLAY", nil, 6); t:SetColorTexture(0.22, 0.22, 0.22, 1); return t end
@@ -534,9 +560,6 @@ function Bags:_buildSlot(body, isBank)
     btn._ql = edge(); btn._ql:SetPoint("TOPLEFT"); btn._ql:SetPoint("BOTTOMLEFT"); btn._ql:SetWidth(1.5)
     btn._qr = edge(); btn._qr:SetPoint("TOPRIGHT"); btn._qr:SetPoint("BOTTOMRIGHT"); btn._qr:SetWidth(1.5)
     btn._qedges = { btn._qt, btn._qb, btn._ql, btn._qr }
-    if btn.Count then
-        btn.Count:SetFont(Font(), self.db.profile.bagCountFontSize or 11, "OUTLINE")
-    end
     btn.ilvl = btn:CreateFontString(nil, "OVERLAY")
     btn.ilvl:SetFont(Font(), self.db.profile.itemlevelFontSize or 12, "OUTLINE")
     btn.ilvl:SetPoint("TOPLEFT", btn, "TOPLEFT", 1, -1)
@@ -546,6 +569,7 @@ function Bags:_buildSlot(body, isBank)
     btn.cd = CreateFrame("Cooldown", nil, btn, "CooldownFrameTemplate")
     btn.cd:SetAllPoints(btn)
     btn.cd:SetDrawEdge(false)
+    btn.cd:EnableMouse(false)   -- never intercept slot clicks
     if btn.cd.SetHideCountdownNumbers then btn.cd:SetHideCountdownNumbers(false) end
     -- keep the stack count readable above the swipe
     if btn.Count then btn.Count:SetParent(btn); btn.Count:SetDrawLayer("OVERLAY", 7) end
@@ -601,6 +625,21 @@ function Bags:_buildSlot(body, isBank)
     end)
     btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
+    -- Right-click "use" is the secure type2="item" action (attributes set in
+    -- RenderSlot) -- nothing to do here for it. Left-click = pickup/move, which is
+    -- NOT protected, so we drive it from PostClick (runs AFTER the secure handler,
+    -- does not replace it). Shift-left-click links the item to chat.
+    btn:SetScript("PostClick", function(self, button)
+        if button ~= "LeftButton" or InCombatLockdown() then return end
+        local bag, slot = self._holder:GetID(), self:GetID()
+        if IsModifiedClick and IsModifiedClick("CHATLINK") then
+            local link = C_Container.GetContainerItemLink and C_Container.GetContainerItemLink(bag, slot)
+            if link and HandleModifiedItemClick then HandleModifiedItemClick(link) end
+            return
+        end
+        ContainerPickup(bag, slot)   -- C_Container.PickupContainerItem (move/pickup)
+    end)
+
     return btn
 end
 
@@ -628,11 +667,23 @@ function Bags:RenderSlot(btn, bag, slot, info)
     btn:Show()
     btn._holder:SetID(bag)   -- secure template reads parent:GetID() as bag
     btn:SetID(slot)          -- and self:GetID() as slot
+    -- Secure right-click "use" via a /use macro. The secure "item"+bag/slot type is
+    -- unreliable on MoP Classic 5.5.x (older secure codebase), but the macro command
+    -- "/use <bag> <slot>" maps straight to UseContainerItem in the secure
+    -- environment and works for consumables (potions), equips, and merchant-sell --
+    -- the only taint-free way to use protected items. SetAttribute is combat-locked,
+    -- so guard it; slots don't change mid-combat.
+    if not InCombatLockdown() then
+        btn:SetAttribute("type2", "macro")
+        btn:SetAttribute("macrotext2", "/use " .. bag .. " " .. slot)
+    end
     local icon = info and info.iconFileID
-    if SetItemButtonTexture then SetItemButtonTexture(btn, icon) end
-    if btn.icon then btn.icon:SetShown(icon ~= nil) end
-    if SetItemButtonCount then SetItemButtonCount(btn, (info and info.stackCount) or 0) end
-    if SetItemButtonDesaturated then SetItemButtonDesaturated(btn, info and info.isLocked) end
+    btn.icon:SetTexture(icon)
+    btn.icon:SetShown(icon ~= nil)
+    btn.icon:SetDesaturated((info and info.isLocked) and true or false)
+    local count = (info and info.stackCount) or 0
+    btn.Count:SetText(count > 1 and count or "")
+    btn.Count:SetShown(count > 1)
 
     if self.db.profile.showQualityBorder then
         self:SetQualityBorder(btn, QualityColor(info and info.quality))
@@ -1193,7 +1244,7 @@ function Bags:RefreshLocks()
         if btn._holder:IsShown() then
             local bag, slot = btn._holder:GetID(), btn:GetID()
             local info = C_Container.GetContainerItemInfo(bag, slot)
-            if SetItemButtonDesaturated then SetItemButtonDesaturated(btn, info and info.isLocked) end
+            if btn.icon then btn.icon:SetDesaturated((info and info.isLocked) and true or false) end
         end
     end
 end

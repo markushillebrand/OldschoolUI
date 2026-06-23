@@ -47,6 +47,7 @@ local function FriendlySetUnit(self, unit, nameplate)
         self.bg:Hide()
         self.health:Hide()
         if OUI.PP and OUI.PP.SetBorderColor then OUI.PP.SetBorderColor(self, 0, 0, 0, 0) end
+        if self._oui9 then self._oui9:Hide() end
         self:SetSize(120, 12)
         self:SetPoint("CENTER", nameplate, "CENTER", 0, cfg("friendlyNameOnlyYOffset") or -8)
         self.name:ClearAllPoints()
@@ -62,7 +63,8 @@ local function FriendlySetUnit(self, unit, nameplate)
         self.health:SetStatusBarColor(r, g, b)
         self.health:SetMinMaxValues(0, math.max(UnitHealthMax(unit) or 1, 1))
         self.health:SetValue(UnitHealth(unit) or 0)
-        if OUI.PP and OUI.PP.SetBorderColor then
+        if ns.ApplyPlateBorder then ns.ApplyPlateBorder(self, false)
+        elseif OUI.PP and OUI.PP.SetBorderColor then
             local bc = cfg("borderColor")
             OUI.PP.SetBorderColor(self, bc.r, bc.g, bc.b, cfg("showBorder") ~= false and 1 or 0)
         end
@@ -87,6 +89,7 @@ local function CreateFriendlyPlate()
     f.health:SetStatusBarTexture(ns.barTexture())
 
     if OUI.PP and OUI.PP.CreateBorder then OUI.PP.CreateBorder(f, 0.067, 0.067, 0.067, 1) end
+    f._oui9 = OUI.NineSlice(f, { cornerFrac = 0.25, layer = "OVERLAY", sublevel = 3 })
 
     f.name = f:CreateFontString(nil, "OVERLAY")
 

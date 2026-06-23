@@ -358,13 +358,29 @@ local function ourTextures(frame)
     return set
 end
 
+-- Standalone dark backdrop that sits BEHIND the GameMenu. Parented to UIParent
+-- (never to GameMenuFrame), and we never add a child frame or texture to the
+-- secure menu or its buttons -- doing that taints them and forbids the Logout/Quit
+-- callbacks (confirmed via taint log). We only restyle EXISTING regions and run it
+-- all deferred, outside the secure ToggleGameMenu execution.
+local gmBackdrop
+local function ensureGmBackdrop()
+    if gmBackdrop then return gmBackdrop end
+    local bd = CreateFrame("Frame", "OUIGameMenuBackdrop", UIParent)
+    bd:Hide()
+    local fill = bd:CreateTexture(nil, "BACKGROUND")
+    fill:SetAllPoints()
+    fill:SetColorTexture(BG[1], BG[2], BG[3], 0.97)
+    if OUI.PP and OUI.PP.CreateBorder then OUI.PP.CreateBorder(bd, BRD[1], BRD[2], BRD[3], BRD_A) end
+    gmBackdrop = bd
+    return bd
+end
+
 function BS:SkinGameMenuButton(btn)
     if gmBtnState[btn] then return end
     gmBtnState[btn] = true
-    local fs = btn.GetFontString and btn:GetFontString()
-    stripTextures(btn, fs and { [fs] = true } or nil)
-    -- Blizzard re-shows the Left/Middle/Right slices on state changes, so pin
-    -- them hidden.
+    -- existing textures only -- NEVER CreateFrame/CreateTexture on a secure button
+    stripTextures(btn)
     for _, k in ipairs({ "Left", "Middle", "Right" }) do
         local t = btn[k]
         if t and t.SetAlpha then
@@ -372,36 +388,24 @@ function BS:SkinGameMenuButton(btn)
             hooksecurefunc(t, "SetAlpha", function(self, a) if a and a > 0 then self:SetAlpha(0) end end)
         end
     end
-    -- inset dark body + border, sitting 2px inside the button edges
-    local inset = CreateFrame("Frame", nil, btn)
-    inset:SetPoint("TOPLEFT", 2, -2)
-    inset:SetPoint("BOTTOMRIGHT", -2, 2)
-    inset:SetFrameLevel(btn:GetFrameLevel())
-    local body = inset:CreateTexture(nil, "BACKGROUND", nil, -6)
-    body:SetAllPoints()
-    body:SetColorTexture(0.1, 0.1, 0.1, 0.85)
-    if OUI.PP and OUI.PP.CreateBorder then
-        OUI.PP.CreateBorder(inset, BRD[1], BRD[2], BRD[3], BRD_A)
-    end
-    local hl = btn:CreateTexture(nil, "HIGHLIGHT")
-    hl:SetAllPoints(inset)
-    hl:SetColorTexture(OUI.ACCENT.r, OUI.ACCENT.g, OUI.ACCENT.b, 0.18)
+    local fs = btn.GetFontString and btn:GetFontString()
     if fs then
-        local f, sz, fl = fs:GetFont()
-        if f then fs:SetFont(OUI.GetFontPath() or f, sz or 14, fl) end
+        local f, sz = fs:GetFont()
+        if f then fs:SetFont(OUI.GetFontPath() or f, sz or 14, "") end
+        fs:SetTextColor(ac())
+        btn:HookScript("OnEnter", function() if fs then fs:SetTextColor(1, 1, 1) end end)
+        btn:HookScript("OnLeave", function() if fs then fs:SetTextColor(ac()) end end)
     end
 end
 
 function BS:SkinGameMenu()
     local gm = _G.GameMenuFrame
     if not (gm and framesEnabled()) then return end
-    -- our dark fill + Core border first, so we can exclude them from the strip
-    self:DarkPanel(gm, 0.97)
-    -- strip the stock parchment chrome (but never our own bg/border textures)
-    stripTextures(gm, ourTextures(gm))
+    -- strip the stock parchment chrome (existing regions only)
+    stripTextures(gm)
     if gm.NineSlice then gm.NineSlice:SetAlpha(0) end
     if gm.Border then gm.Border:SetAlpha(0) end
-    -- header: strip its art, accent the title, nudge it inside
+    -- header: strip its art, accent the title (recolour existing text only)
     local h = gm.Header
     if h then
         stripTextures(h)
@@ -411,8 +415,19 @@ function BS:SkinGameMenu()
             local f, sz = ht:GetFont()
             ht:SetFont(OUI.GetFontPath() or f, sz or 16, "")
         end
-        h:ClearAllPoints()
-        h:SetPoint("TOP", gm, "TOP", 0, -10)
+    end
+    -- our dark panel as a STANDALONE backdrop behind the now-transparent menu
+    -- (centred on the menu, read-only access to its rect -- no anchor to gm)
+    local bd = ensureGmBackdrop()
+    local cx, cy = gm:GetCenter()
+    local ucx, ucy = UIParent:GetCenter()
+    if cx and ucx then
+        bd:ClearAllPoints()
+        bd:SetPoint("CENTER", UIParent, "CENTER", cx - ucx, cy - ucy)
+        bd:SetSize((gm:GetWidth() or 200) + 16, (gm:GetHeight() or 200) + 16)
+        bd:SetFrameStrata(gm:GetFrameStrata() or "DIALOG")
+        bd:SetFrameLevel(math.max(0, (gm:GetFrameLevel() or 1) - 1))
+        bd:Show()
     end
     -- pooled menu buttons
     if gm.buttonPool and gm.buttonPool.EnumerateActive then
@@ -425,9 +440,12 @@ function BS:SetupGameMenu()
     local gm = _G.GameMenuFrame
     if not gm then return end
     self._gmHooked = true
-    gm:HookScript("OnShow", function() BS:SkinGameMenu() end)
-    if gm.InitButtons then hooksecurefunc(gm, "InitButtons", function() BS:SkinGameMenu() end) end
-    self:SkinGameMenu()
+    -- DEFER all restyling out of the secure ToggleGameMenu execution so it can never
+    -- taint the menu's callbacks. (No InitButtons hook -- that runs inside the
+    -- secure init; OnShow+defer reskins the already-built buttons just as well.)
+    gm:HookScript("OnShow", function() C_Timer.After(0, function() BS:SkinGameMenu() end) end)
+    gm:HookScript("OnHide", function() if gmBackdrop then gmBackdrop:Hide() end end)
+    C_Timer.After(0, function() BS:SkinGameMenu() end)
 end
 
 -- ===========================================================================
@@ -481,6 +499,8 @@ function BS:OnEnable()
     self:SetupTooltips()
     self:SetupContextMenus()
     self:SetupStaticPopups()
+    -- GameMenu reskin (now taint-safe: standalone backdrop + restyle existing
+    -- regions only, deferred -- no child frames on the secure menu/buttons).
     self:SetupGameMenu()
     self:SetupDialogs()
     -- The Menu manager is created around PLAYER_LOGIN, which can be after our

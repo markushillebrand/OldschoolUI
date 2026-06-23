@@ -28,6 +28,7 @@ local defaults = {
         bgColor   = { r = 0.12, g = 0.12, b = 0.12 },
         bgAlpha   = 1.0,
         showBorder = true,
+        borderStyle = "line",          -- line | none | frame | frame-simple | frame-colorless
         borderSize = 1,
         borderColor = { r = 0.067, g = 0.067, b = 0.067 },
         -- reaction colours
@@ -267,6 +268,8 @@ local function CreatePlate()
     if OUI.PP and OUI.PP.CreateBorder then
         OUI.PP.CreateBorder(f, 0.067, 0.067, 0.067, 1)
     end
+    -- optional decorative 9-slice border frame (hidden until a frame style is set)
+    f._oui9 = OUI.NineSlice(f, { cornerFrac = 0.25, layer = "OVERLAY", sublevel = 3 })
 
     -- name (top) + health% (right)
     f.name = f:CreateFontString(nil, "OVERLAY")
@@ -289,6 +292,45 @@ local function CreatePlate()
     return f
 end
 
+-- Decorative 9-slice border frames (TGA, transparent center). "colorless" is
+-- greyscale and gets tinted by borderColor; the others carry their own colour.
+ns.BORDER_FRAMES = {
+    ["frame"]           = "Interface\\AddOns\\OUI_Nameplates\\Media\\border.tga",
+    ["frame-simple"]    = "Interface\\AddOns\\OUI_Nameplates\\Media\\border-simple.tga",
+    ["frame-colorless"] = "Interface\\AddOns\\OUI_Nameplates\\Media\\border-colorless.tga",
+}
+
+-- Single entry point for the plate border: picks the solid pixel line or a
+-- decorative 9-slice frame from borderStyle, applies show/colour, and tints the
+-- current target with the accent colour.
+local function applyBorder(plate, targeted)
+    local style     = cfg("borderStyle") or "line"
+    local show      = cfg("showBorder") ~= false
+    local bc        = cfg("borderColor")
+    local framePath = ns.BORDER_FRAMES[style]
+    local r, g, b   = bc.r, bc.g, bc.b
+    if targeted then local a = OUI.ACCENT; r, g, b = a.r, a.g, a.b end
+
+    if (not show) or style == "none" then
+        if OUI.PP and OUI.PP.SetBorderColor then OUI.PP.SetBorderColor(plate, r, g, b, 0) end
+        if plate._oui9 then plate._oui9:Hide() end
+        return
+    end
+
+    if framePath and plate._oui9 then
+        if OUI.PP and OUI.PP.SetBorderColor then OUI.PP.SetBorderColor(plate, r, g, b, 0) end
+        plate._oui9:SetTexture(framePath)
+        plate._oui9:Layout(plate.health, (cfg("borderSize") or 1) + 1, 10)
+        if style == "frame-colorless" or targeted then plate._oui9:SetVertexColor(r, g, b, 1)
+        else plate._oui9:SetVertexColor(1, 1, 1, 1) end
+        plate._oui9:SetShown(true)
+    else
+        if plate._oui9 then plate._oui9:Hide() end
+        if OUI.PP and OUI.PP.SetBorderColor then OUI.PP.SetBorderColor(plate, r, g, b, 1) end
+    end
+end
+ns.ApplyPlateBorder = applyBorder
+
 local function stylePlate(plate)
     local w, h = barWidth(), barHeight()
     plate:SetSize(w, h)
@@ -301,10 +343,7 @@ local function stylePlate(plate)
     plate.name:SetFont(fp, cfg("enemyNameTextSize") or 11, "OUTLINE")
     plate.hpText:SetFont(fp, (cfg("enemyNameTextSize") or 11) - 1, "OUTLINE")
 
-    if OUI.PP and OUI.PP.SetBorderColor then
-        local bc = cfg("borderColor")
-        OUI.PP.SetBorderColor(plate, bc.r, bc.g, bc.b, cfg("showBorder") ~= false and 1 or 0)
-    end
+    applyBorder(plate, plate.unit and UnitIsUnit(plate.unit, "target"))
 end
 
 local function shortValue(v)
@@ -346,16 +385,9 @@ local function updateName(plate)
 end
 
 local function updateTargetHighlight(plate)
-    -- brighten the border on the current target
-    if not (OUI.PP and OUI.PP.SetBorderColor) then return end
+    -- brighten the border (line or frame) on the current target
     local unit = plate.unit
-    if unit and UnitIsUnit(unit, "target") then
-        local a = OUI.ACCENT
-        OUI.PP.SetBorderColor(plate, a.r, a.g, a.b, 1)
-    else
-        local bc = cfg("borderColor")
-        OUI.PP.SetBorderColor(plate, bc.r, bc.g, bc.b, cfg("showBorder") ~= false and 1 or 0)
-    end
+    applyBorder(plate, unit and UnitIsUnit(unit, "target"))
 end
 
 local function plateSetUnit(plate, unit, nameplate)
