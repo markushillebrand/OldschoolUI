@@ -224,6 +224,47 @@ function OUI.SetGlobalBorderSize(n)
     NotifyStyle()
 end
 
+-------------------------------------------------------------------------------
+--  Shared SKIN BACKGROUND colour (one central fill colour for every OUI reskin
+--  panel/backdrop). Not limited to black -- pick any colour; the readable text
+--  colour adapts automatically from its luminance.
+-------------------------------------------------------------------------------
+function OUI.GetSkinBg()
+    local c = OUI.db and OUI.db.global and OUI.db.global.skinBg
+    if c then return c[1], c[2], c[3], c[4] or 0.97 end
+    return 0.05, 0.05, 0.06, 0.97
+end
+function OUI.SetSkinBg(r, g, b, a)
+    if OUI.db and OUI.db.global then OUI.db.global.skinBg = { r, g, b, a or 0.97 } end
+    NotifyStyle()
+end
+-- Readable foreground for the current skin background (dark text on light bg,
+-- light text on dark bg), via perceived luminance.
+function OUI.GetSkinTextColor()
+    local r, g, b = OUI.GetSkinBg()
+    local lum = 0.299 * r + 0.587 * g + 0.114 * b
+    if lum > 0.5 then return 0.10, 0.10, 0.10 else return 0.88, 0.88, 0.85 end
+end
+
+-- Shared skin-background texture registry: OUI-native modules colour their panel
+-- backgrounds through this so the whole suite follows the central skin colour and
+-- re-tints live when it changes. Pass the texture + its alpha; returns the texture.
+local _skinBgTex = setmetatable({}, { __mode = "k" })
+function OUI.RegisterSkinBg(tex, alpha)
+    if not tex or not tex.SetColorTexture then return tex end
+    _skinBgTex[tex] = alpha or 0.97
+    local r, g, b = OUI.GetSkinBg()
+    tex:SetColorTexture(r, g, b, alpha or 0.97)
+    return tex
+end
+-- re-tint every registered native background when the skin colour changes
+OUI.RegisterStyleListener(function()
+    local r, g, b = OUI.GetSkinBg()
+    for tex, a in pairs(_skinBgTex) do
+        if tex.SetColorTexture then tex:SetColorTexture(r, g, b, a) end
+    end
+end)
+
 -- Reusable 3-tier resolver for any per-module style system. Given a module's
 -- profile, a key prefix, and a bar-type tag ("Health"/"Power"/…), returns which
 -- scope's value should win: "type" (profile[prefix.."Override"..which] set),

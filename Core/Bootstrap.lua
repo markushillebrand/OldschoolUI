@@ -29,6 +29,7 @@ local DEFAULTS = {
         barTexture          = "flat",      -- shared default status-bar texture key
         borderColor         = { 0, 0, 0, 0.9 }, -- shared default border colour
         borderSize          = 1,           -- shared default border thickness (px)
+        skinBg              = { 0.05, 0.05, 0.06, 0.97 }, -- central reskin fill colour
         classColors         = {},          -- [CLASS]={r,g,b} global per-class overrides (empty = Blizzard)
         colorIntensity      = 1.0,         -- global class-colour brightness multiplier
         moduleEnabled       = {},          -- [folder]=false to disable a module (absent/true = on)

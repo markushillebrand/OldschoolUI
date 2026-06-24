@@ -605,6 +605,12 @@ OUI:RegisterModule("General", {
             get = function() local c = OUI.GetGlobalBorderColor(); return c[1], c[2], c[3], c[4] end,
             set = function(r, g, b, a) OUI.SetGlobalBorderColor(r, g, b, a) end,
         }))
+        page:AddRow(OUI.Widgets.ColorSwatch(page, {
+            label = "Skin background colour (all reskins)", hasAlpha = true,
+            tooltip = "Central fill colour for every OUI reskin panel (tooltips, menus, character sheet, Collections, Mail, dialogs). Text colour adapts to stay readable.",
+            get = function() local r, g, b, a = OUI.GetSkinBg(); return r, g, b, a end,
+            set = function(r, g, b, a) OUI.SetSkinBg(r, g, b, a) end,
+        }))
         page:AddRow(OUI.Widgets.Slider(page, {
             label = "Border size (all modules)", min = 0, max = 4, step = 1,
             get = function() return OUI.GetGlobalBorderSize() end,
