@@ -335,6 +335,13 @@ local function ShowRollPanel(duration)
         LogBonus("  -> ABORT: no native Roll button to forward to")
         return false
     end
+    if InCombatLockdown() then
+        -- f hosts the secure forward button as a child; :Show() on it in combat is
+        -- a blocked protected action. Fall back to Blizzard's native frame.
+        LogBonus("  -> in combat: custom panel can't Show (secure child); native fallback")
+        ShowNativeRoll()
+        return false
+    end
     rollExpiresAt = GetTime() + ((duration and duration > 0) and duration or 30)
     f:Show()
     return true
@@ -352,11 +359,100 @@ local function HideRollPanel()
 end
 ns.LR_HideBonusPanel = HideRollPanel
 
+-- Taint-safe reskin of Blizzard's native BonusRollFrame so it matches OUI even for
+-- in-combat prompts (where our own panel can't be shown). We add a STANDALONE
+-- backdrop behind it (parented to UIParent, never a child of the secure frame),
+-- dim the frame's own background chrome, and recolour the Roll/Pass buttons --
+-- EXISTING regions/fonts only, no child frames on the secure frame/buttons, and
+-- the structural pass runs OOC only. Blizzard keeps ownership of Show/Hide and the
+-- secure Roll button.
+local bonusBackdrop, nativeSkinned, nativeHooked
+local function EnsureBonusBackdrop()
+    if bonusBackdrop then return bonusBackdrop end
+    local ACC = OldschoolUI.ACCENT or { r = 0.85, g = 0.64, b = 0.25 }
+    local bd = CreateFrame("Frame", "OUIBonusRollBackdrop", UIParent)
+    bd:Hide()
+    local fill = bd:CreateTexture(nil, "BACKGROUND")
+    fill:SetAllPoints(bd)
+    fill:SetColorTexture(0.06, 0.06, 0.07, 0.94)
+    if OldschoolUI.PP and OldschoolUI.PP.CreateBorder then
+        OldschoolUI.PP.CreateBorder(bd, ACC.r, ACC.g, ACC.b, 1, 1)
+    end
+    bonusBackdrop = bd
+    return bd
+end
+
+local function PlaceBonusBackdrop()
+    local b = _G.BonusRollFrame
+    local bd = bonusBackdrop
+    if not (b and bd and b:GetCenter()) then return end
+    local cx, cy   = b:GetCenter()
+    local ucx, ucy = UIParent:GetCenter()
+    bd:ClearAllPoints()
+    bd:SetPoint("CENTER", UIParent, "CENTER", cx - ucx, cy - ucy)
+    bd:SetSize((b:GetWidth() or 230) + 14, (b:GetHeight() or 110) + 14)
+    bd:SetFrameStrata(b:GetFrameStrata() or "DIALOG")
+    bd:SetFrameLevel(math.max(0, (b:GetFrameLevel() or 1) - 1))
+    bd:Show()
+end
+
+local function ReskinNativeBonusRoll()
+    local b = _G.BonusRollFrame
+    if not b then return end
+    EnsureBonusBackdrop()
+    -- keep the backdrop glued to the frame's lifecycle (hooks are taint-safe)
+    if not nativeHooked then
+        nativeHooked = true
+        b:HookScript("OnShow", PlaceBonusBackdrop)
+        b:HookScript("OnHide", function() if bonusBackdrop then bonusBackdrop:Hide() end end)
+    end
+    -- structural restyle: OOC only, once
+    if nativeSkinned or InCombatLockdown() then
+        if b:IsShown() then PlaceBonusBackdrop() end
+        return
+    end
+    nativeSkinned = true
+    local ACC = OldschoolUI.ACCENT or { r = 0.85, g = 0.64, b = 0.25 }
+    -- dim the frame's own background/border chrome, keep ARTWORK/OVERLAY (coin,
+    -- icon, glow). One-time layer dump helps us refine after a real raid prompt.
+    if b.GetRegions then
+        local n, layers = select("#", b:GetRegions()), {}
+        for i = 1, n do
+            local r = select(i, b:GetRegions())
+            if r and r.IsObjectType and r:IsObjectType("Texture") then
+                local layer = r.GetDrawLayer and r:GetDrawLayer() or "?"
+                layers[#layers + 1] = layer
+                if layer == "BACKGROUND" or layer == "BORDER" then r:SetAlpha(0) end
+            end
+        end
+        LogBonus("ReskinNative: regions=%d layers=%s pf=%s", n,
+            table.concat(layers, ","), tostring(b.PromptFrame ~= nil))
+    end
+    -- Roll / Pass buttons: existing slices + font only
+    local function styleBtn(btn)
+        if not btn then return end
+        for _, k in ipairs({ "Left", "Middle", "Right" }) do
+            local t = btn[k]; if t and t.SetAlpha then t:SetAlpha(0) end
+        end
+        if btn.SetNormalTexture then pcall(btn.SetNormalTexture, btn, nil) end
+        local fs = btn.GetFontString and btn:GetFontString()
+        if fs then fs:SetTextColor(ACC.r, ACC.g, ACC.b) end
+    end
+    local pf = b.PromptFrame
+    if pf then
+        styleBtn(pf.Roll or pf.RollButton or pf.rollButton)
+        styleBtn(pf.PassButton or pf.Pass or pf.passButton)
+    end
+    if b:IsShown() then PlaceBonusBackdrop() end
+end
+ns.LR_ReskinNativeBonusRoll = ReskinNativeBonusRoll
+
 -- Surface Blizzard's own bonus-roll frame (its native, fully-secure Roll
 -- button) instead of our forwarding panel. The frame handles the prompt via
 -- its own registration; we only make sure it is on-screen and never show ours.
 local function ShowNativeRoll()
     HideRollPanel()
+    ReskinNativeBonusRoll()
     local b = _G.BonusRollFrame
     if b then
         if not InCombatLockdown() then
@@ -365,8 +461,12 @@ local function ShowNativeRoll()
                 b:SetPoint("TOP", UIParent, "TOP", 0, -200)
             end
             if b.SetAlpha then b:SetAlpha(1) end
+            if b.Show then b:Show() end
         end
-        if b.Show then b:Show() end
+        -- In combat we must NOT call Show()/SetPoint() on the secure BonusRollFrame
+        -- ourselves -- that is a blocked protected action. It is registered for
+        -- SPELL_CONFIRMATION_PROMPT (see PLAYER_LOGIN) so Blizzard's own secure
+        -- handler shows it, and it is pre-anchored at login so it is visible.
     end
     LogNativeState("ShowNativeRoll")
 end
@@ -421,9 +521,12 @@ ev:SetScript("OnEvent", function(_, event, ...)
         -- Pre-wire our secure forward button now (OOC). The native Roll button
         -- may not exist until the first prompt, so retry shortly after login.
         WireRollButton()
+        ReskinNativeBonusRoll()
         if C_Timer and C_Timer.After then
             C_Timer.After(3, WireRollButton)
             C_Timer.After(8, WireRollButton)
+            C_Timer.After(3, ReskinNativeBonusRoll)
+            C_Timer.After(8, ReskinNativeBonusRoll)
         end
         return
     end
@@ -432,6 +535,7 @@ ev:SetScript("OnEvent", function(_, event, ...)
         -- Leaving combat is our chance to (re)wire for the NEXT bonus-roll
         -- prompt, since SetAttribute is blocked while in combat.
         WireRollButton()
+        ReskinNativeBonusRoll()
         if hidePending then hidePending = false; if rollPanel then rollPanel:Hide() end end
         return
     end
@@ -470,7 +574,11 @@ ev:SetScript("OnEvent", function(_, event, ...)
             local declined = HandleBonusPrompt(spellID, CurrentBoss())
             LogBonus("auto-declined=%s useNative=%s", tostring(declined), tostring(UseNativeRoll()))
             if not declined then
-                if UseNativeRoll() then
+                if UseNativeRoll() or InCombatLockdown() then
+                    -- our panel hosts Blizzard's secure Roll button as a child, so
+                    -- :Show() on it is a protected action and is BLOCKED in combat.
+                    -- Bonus prompts almost always arrive in combat -> use the native
+                    -- frame, which Blizzard's own secure handler shows.
                     ShowNativeRoll()
                 else
                     local dur = tonumber(duration)

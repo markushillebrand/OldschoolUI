@@ -4,9 +4,20 @@ All notable changes to OldschoolUI are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/); versions follow the tag pushed
 to CI (the BigWigs packager substitutes `@project-version@` in every `.toc`).
 
-## [Unreleased]
+## [1.1.0] - 2026-06-24
 
 ### Added
+- **Blizzard frame reskin:** Merchant, Auction House, Spellbook, Talents, Group
+  Finder, Guild, Dungeon Journal, Achievements, Inspect and more now match the
+  OldschoolUI dark theme and are movable.
+- **World Map:** opens in windowed (panel) mode by default instead of fullscreen.
+- **Quest Log:** both the map quest panel and the classic quest-log window are
+  reskinned (dark backgrounds, OldschoolUI border) and the classic window is
+  movable.
+- **Mail:** full dark reskin; the minimap mail indicator now clears once mail is
+  collected.
+- **Character sheet:** Currency and Reputation tabs reskinned to match; the
+  Mastery stat tooltip now shows the specialization's mastery name and effect.
 - **Nameplates – Class Power:** secondary resource shown above the target's
   nameplate (combo points, chi, holy power, shadow orbs, soul shards, burning
   embers, demonic fury, eclipse, death-knight runes). Options: show on/off, on
@@ -16,6 +27,8 @@ to CI (the BigWigs packager substitutes `@project-version@` in every `.toc`).
   Damage Meter windows are now repositionable; a floating "Lock frames" button
   and a "Move Frames" entry in the options footer.
 - **Escape menu:** an OldschoolUI button in the game menu opens the options.
+- **Theming:** a central skin background colour now drives the native frames
+  reskinned by OldschoolUI, kept in sync with the chosen accent.
 
 ### Fixed
 - **Bags:** main-bank item tooltips no longer flash and turn into a black box.

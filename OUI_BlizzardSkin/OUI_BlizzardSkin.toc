@@ -8,4 +8,8 @@
 
 OUI_BlizzardSkin.lua
 OUI_BlizzardSkin_CharacterSheet.lua
+OUI_BlizzardSkin_Collections.lua
+OUI_BlizzardSkin_Mail.lua
+OUI_BlizzardSkin_Frames.lua
+OUI_BlizzardSkin_QuestLog.lua
 OUI_BlizzardSkin_Options.lua

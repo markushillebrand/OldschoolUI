@@ -58,7 +58,7 @@ local function MakeWindow(globalName, titleText, w, h)
     f:SetScript("OnDragStop", f.StopMovingOrSizing)
 
     local bg = f:CreateTexture(nil, "BACKGROUND")
-    bg:SetAllPoints(); bg:SetColorTexture(0.05, 0.07, 0.09, 0.96)
+    bg:SetAllPoints(); OldschoolUI.RegisterSkinBg(bg, 0.96)
     if OldschoolUI and OldschoolUI.PP and OldschoolUI.PP.CreateBorder then
         OldschoolUI.PP.CreateBorder(f, 1, 1, 1, OldschoolUI.DD_BRD_A or 0.2, 1)
     end

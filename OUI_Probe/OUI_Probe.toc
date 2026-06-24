@@ -2,7 +2,7 @@
 ## Title: OUI Probe (API Dumper)
 ## Author: Lyonthedragon
 ## Version: 1.0
-## Notes: Diagnostic: dumps live class/spec/power-type API data per character for the OldschoolUI rewrite. Run /ouiprobe, then /reload, then send the SavedVariables file.
+## Notes: Diagnostic: /ouiprobe dumps live class/spec/power-type API data; /ouiprobe taint scans the ESC/Logout chain (UISpecialFrames + GameMenu globals) for persistent taint. Both persist to OUIProbeDB; /reload then send the SavedVariables file.
 ## SavedVariables: OUIProbeDB
 
 OUI_Probe.lua

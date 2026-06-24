@@ -550,16 +550,57 @@ end
 
 local function spellTooltipLines(id)
     local tip = masteryScanTip()
-    if not tip.SetSpellByID then return nil end
     tip:ClearLines()
-    tip:SetSpellByID(id)
+    -- MoP's own PaperDollFrame uses AddSpellByID; prefer it, fall back to SetSpellByID.
+    if tip.AddSpellByID then
+        tip:AddSpellByID(id)
+        tip:Show()
+    elseif tip.SetSpellByID then
+        tip:SetSpellByID(id)
+    else
+        return nil
+    end
     local lines, n = {}, tip:NumLines() or 0
     for i = 1, n do
         local fs = _G["OUIMasteryScanTipTextLeft" .. i]
         local txt = fs and fs:GetText()
         if txt and txt ~= "" then lines[#lines + 1] = txt end
     end
+    if tip.AddSpellByID then tip:Hide() end
     return lines
+end
+
+-- Resolve the spec's mastery spell ID(s). The 5.5.x C_SpecializationInfo version
+-- returns a TABLE (array of spell IDs, or tables carrying .spellID), while the old
+-- global returned up to two bare numbers. Normalise both to a flat list of IDs.
+local function masterySpellIDs(spec)
+    local ids = {}
+    local f = C_SpecializationInfo and C_SpecializationInfo.GetSpecializationMasterySpells
+    if f then
+        local ok, res = pcall(f, spec)
+        if ok and res then
+            if type(res) == "table" then
+                for _, v in ipairs(res) do
+                    if type(v) == "number" then
+                        ids[#ids + 1] = v
+                    elseif type(v) == "table" then
+                        local sid = v.spellID or v.spellId or v.id
+                        if sid then ids[#ids + 1] = sid end
+                    end
+                end
+            elseif type(res) == "number" then
+                ids[#ids + 1] = res
+            end
+        end
+    end
+    if #ids == 0 and GetSpecializationMasterySpells then
+        local ok, s1, s2 = pcall(GetSpecializationMasterySpells, spec)
+        if ok then
+            if s1 then ids[#ids + 1] = s1 end
+            if s2 then ids[#ids + 1] = s2 end
+        end
+    end
+    return ids
 end
 
 local function masterySpecLines()
@@ -571,17 +612,15 @@ local function masterySpecLines()
         spec = GetSpecialization()
     end
     if not spec then return out end
-    if GetNumSpecializations and spec > GetNumSpecializations() then return out end
+    if GetNumSpecializations and (spec < 1 or spec > GetNumSpecializations()) then return out end
 
-    local id = GetSpecializationMasterySpells and GetSpecializationMasterySpells(spec)
-    if id then
+    for _, id in ipairs(masterySpellIDs(spec)) do
         local name = GetSpellInfo and GetSpellInfo(id)
         if name and name ~= "" then out[#out + 1] = { text = name, accent = true } end
         local lines = spellTooltipLines(id)
         if lines then
-            -- line 1 is the spell name (already shown as the accent header); the
-            -- remaining lines are the resolved effect description.
             for i = 1, #lines do
+                -- line 1 is the spell name (already the accent header) -> skip it
                 if not (i == 1 and name and lines[i] == name) then
                     out[#out + 1] = { text = lines[i] }
                 end
@@ -590,8 +629,13 @@ local function masterySpecLines()
     end
 
     -- fallback: at least show the spec name if the mastery spell lookup failed.
-    if #out == 0 and GetSpecializationInfo then
-        local _, specName = GetSpecializationInfo(spec)
+    if #out == 0 then
+        local specName
+        if C_SpecializationInfo and C_SpecializationInfo.GetSpecializationInfo then
+            _, specName = C_SpecializationInfo.GetSpecializationInfo(spec)
+        elseif GetSpecializationInfo then
+            _, specName = GetSpecializationInfo(spec)
+        end
         if specName and specName ~= "" then out[#out + 1] = { text = specName, accent = true } end
     end
     return out
@@ -850,7 +894,7 @@ function CS:BuildIconPicker()
     p:SetPoint("CENTER")
     p:SetFrameStrata("FULLSCREEN_DIALOG"); p:SetToplevel(true)
     p:EnableMouse(true); p:SetMovable(true); p:Hide()
-    local bg = p:CreateTexture(nil, "BACKGROUND"); bg:SetAllPoints(); bg:SetColorTexture(BG[1], BG[2], BG[3], 0.98)
+    local bg = p:CreateTexture(nil, "BACKGROUND"); bg:SetAllPoints(); OUI.RegisterSkinBg(bg, 0.98)
     if OUI.PP and OUI.PP.CreateBorder then OUI.PP.CreateBorder(p, BRD[1], BRD[2], BRD[3], BRD[4]) end
 
     local tb = CreateFrame("Frame", nil, p); tb:SetPoint("TOPLEFT"); tb:SetPoint("TOPRIGHT"); tb:SetHeight(24)
@@ -1040,7 +1084,7 @@ function CS:Build()
     self.frame = f
 
     local bg = f:CreateTexture(nil, "BACKGROUND")
-    bg:SetAllPoints(); bg:SetColorTexture(BG[1], BG[2], BG[3], BG[4])
+    bg:SetAllPoints(); OUI.RegisterSkinBg(bg, BG[4])
     if OUI.PP and OUI.PP.CreateBorder then
         OUI.PP.CreateBorder(f, BRD[1], BRD[2], BRD[3], BRD[4])
     end

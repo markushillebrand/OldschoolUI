@@ -36,7 +36,7 @@ function Bags:BuildBankWindow()
     f:Hide()
 
     local bg = f:CreateTexture(nil, "BACKGROUND")
-    bg:SetAllPoints(); bg:SetColorTexture(0.06, 0.06, 0.07, 0.97)
+    bg:SetAllPoints(); OldschoolUI.RegisterSkinBg(bg, 0.97)
     if PP and PP.CreateBorder then PP.CreateBorder(f, 0, 0, 0, 0.9) end
 
     -- header (drag handle)

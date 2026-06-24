@@ -97,7 +97,8 @@ function BS:SkinTooltip(tt)
     if tt.IsEmbedded then return end
 
     local st = ttOverlay(tt)
-    st.bg:SetColorTexture(BG[1], BG[2], BG[3], BG_A)
+    local _sr, _sg, _sb = OUI.GetSkinBg()
+    st.bg:SetColorTexture(_sr, _sg, _sb, BG_A)
     st.bg:Show()
     if tt.NineSlice then tt.NineSlice:SetAlpha(0) end
     if OUI.PP and OUI.PP.CreateBorder then
@@ -252,7 +253,9 @@ function BS:DarkPanel(frame, alpha)
         st.bg:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -1, 1)
         panelState[frame] = st
     end
-    st.bg:SetColorTexture(BG[1], BG[2], BG[3], alpha or 0.95)
+    local sr, sg, sb = OUI.GetSkinBg()
+    st.alpha = alpha or st.alpha or 0.95
+    st.bg:SetColorTexture(sr, sg, sb, st.alpha)
     st.bg:SetAlpha(1)
     st.bg:Show()
     for _, k in ipairs({ "NineSlice", "Border", "Bg", "Background" }) do
@@ -263,7 +266,65 @@ function BS:DarkPanel(frame, alpha)
     self:BorderOverlay(frame)
 end
 
+-- Re-tint every existing dark panel (and the game-menu backdrop) when the central
+-- skin background colour changes, so the new colour applies live.
+local gmBackdropFill
+local function RecolorSkin()
+    local r, g, b = OUI.GetSkinBg()
+    for _, st in pairs(panelState) do
+        if st.bg then st.bg:SetColorTexture(r, g, b, st.alpha or 0.95) end
+    end
+    if gmBackdropFill then gmBackdropFill:SetColorTexture(r, g, b, 0.97) end
+end
+if OUI.RegisterStyleListener then OUI.RegisterStyleListener(RecolorSkin) end
+
 local function framesEnabled() return BS.db and BS.db.profile and BS.db.profile.reskinFrames end
+
+-- Make a (non-secure) Blizzard frame freely draggable by its title strip, with
+-- the position saved per dbKey and restored on show, and ESC-to-close bound while
+-- shown. Safe (no taint): these are ordinary UI frames.
+function BS:MakeMovable(frame, dbKey, closeFn)
+    if not frame or not dbKey then return end
+    self._movable = self._movable or {}
+    if self._movable[frame] then return end
+    self._movable[frame] = true
+
+    frame:SetMovable(true)
+    frame:EnableMouse(true)
+    frame:SetClampedToScreen(true)
+    -- NOTE: do NOT set IgnoreFramePositionManager / SetUserPlaced here -- that
+    -- detaches the frame from the UIPanel system, after which ESC no longer
+    -- recognises it as a closeable panel (game menu won't open either). We keep it
+    -- a managed panel (so ESC closes it natively) and just re-apply our saved
+    -- position on show. Adding it to UISpecialFrames is also out: writing to that
+    -- Blizzard table taints CloseSpecialWindows and re-breaks Logout.
+
+    local grip = CreateFrame("Frame", nil, frame)
+    grip:SetPoint("TOPLEFT", 0, 0)
+    grip:SetPoint("TOPRIGHT", -28, 0)              -- leave the close button clickable
+    grip:SetHeight(28)
+    grip:SetFrameLevel(frame:GetFrameLevel() + 20) -- above the title art so it gets drags
+    grip:EnableMouse(true)
+    grip:RegisterForDrag("LeftButton")
+    grip:SetScript("OnDragStart", function() frame:StartMoving() end)
+    grip:SetScript("OnDragStop", function()
+        frame:StopMovingOrSizing()
+        local p, _, rp, x, y = frame:GetPoint()
+        BS.db.profile.framePos = BS.db.profile.framePos or {}
+        BS.db.profile.framePos[dbKey] = { p, rp, x, y }
+    end)
+
+    local function restorePos(self)
+        local fp = BS.db.profile.framePos and BS.db.profile.framePos[dbKey]
+        if fp then self:ClearAllPoints(); self:SetPoint(fp[1], UIParent, fp[2], fp[3], fp[4]) end
+    end
+    frame:HookScript("OnShow", restorePos)
+    if frame:IsShown() then restorePos(frame) end
+    -- NOTE: ESC-to-close is intentionally left to the native UIPanel system. We no
+    -- longer detach the frame from the panel manager (see above), so the game's
+    -- own ESC handling closes it. Adding our own ESCAPE override binding here would
+    -- actually HIJACK ESC away from ToggleGameMenu and break that native close.
+end
 
 -- ===========================================================================
 --  Context menus (MoP Classic uses the modern Menu manager)
@@ -370,7 +431,9 @@ local function ensureGmBackdrop()
     bd:Hide()
     local fill = bd:CreateTexture(nil, "BACKGROUND")
     fill:SetAllPoints()
-    fill:SetColorTexture(BG[1], BG[2], BG[3], 0.97)
+    local sr, sg, sb = OUI.GetSkinBg()
+    fill:SetColorTexture(sr, sg, sb, 0.97)
+    gmBackdropFill = fill
     if OUI.PP and OUI.PP.CreateBorder then OUI.PP.CreateBorder(bd, BRD[1], BRD[2], BRD[3], BRD_A) end
     gmBackdrop = bd
     return bd
@@ -417,17 +480,24 @@ function BS:SkinGameMenu()
         end
     end
     -- our dark panel as a STANDALONE backdrop behind the now-transparent menu
-    -- (centred on the menu, read-only access to its rect -- no anchor to gm)
+    -- (centred on the menu, read-only access to its rect -- no anchor to gm).
+    -- Only surface it while the menu is actually shown; the initial setup pass
+    -- runs at login when the menu is hidden, and showing it then would leave a
+    -- black bar centred on screen until the menu is first opened/closed.
     local bd = ensureGmBackdrop()
-    local cx, cy = gm:GetCenter()
-    local ucx, ucy = UIParent:GetCenter()
-    if cx and ucx then
-        bd:ClearAllPoints()
-        bd:SetPoint("CENTER", UIParent, "CENTER", cx - ucx, cy - ucy)
-        bd:SetSize((gm:GetWidth() or 200) + 16, (gm:GetHeight() or 200) + 16)
-        bd:SetFrameStrata(gm:GetFrameStrata() or "DIALOG")
-        bd:SetFrameLevel(math.max(0, (gm:GetFrameLevel() or 1) - 1))
-        bd:Show()
+    if gm:IsShown() then
+        local cx, cy = gm:GetCenter()
+        local ucx, ucy = UIParent:GetCenter()
+        if cx and ucx then
+            bd:ClearAllPoints()
+            bd:SetPoint("CENTER", UIParent, "CENTER", cx - ucx, cy - ucy)
+            bd:SetSize((gm:GetWidth() or 200) + 16, (gm:GetHeight() or 200) + 16)
+            bd:SetFrameStrata(gm:GetFrameStrata() or "DIALOG")
+            bd:SetFrameLevel(math.max(0, (gm:GetFrameLevel() or 1) - 1))
+            bd:Show()
+        end
+    else
+        bd:Hide()
     end
     -- pooled menu buttons
     if gm.buttonPool and gm.buttonPool.EnumerateActive then

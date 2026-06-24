@@ -167,6 +167,89 @@ local function runProbe(verbose)
     end
 end
 
+-- ===========================================================================
+--  Taint scanner (/ouiprobe taint)
+--  Walks the ESC-close chain (UISpecialFrames + the GameMenu/Logout globals)
+--  and reports, per entry, whether the reference is still secure or has been
+--  tainted -- and by which addon. Results are stored in OUIProbeDB.taint so they
+--  survive a /reload and can be sent.
+--
+--  LIMITATION (told honestly): issecurevariable reports taint that PERSISTS at
+--  the moment of scanning. The classic Logout failure is a *contextual*
+--  CloseSpecialWindows cascade that only taints during the ESC keypress and
+--  clears afterwards, so a chat-triggered scan may show everything "secure" even
+--  though ESC->Logout just failed. This catches persistently-tainted frames/
+--  globals; for the contextual cascade, `/console taintLog 2` stays authoritative.
+-- ===========================================================================
+local TAINT_GLOBALS = {
+    "ToggleGameMenu", "CloseSpecialWindows", "CloseAllWindows", "CloseMenus",
+    "GameMenuFrame", "UIParent", "Logout", "Quit", "ShowUIPanel", "HideUIPanel",
+}
+
+-- Returns "secure" | "TAINT:<addon>" | "TAINT:?" | "n/a"
+local function checkVar(name, key)
+    local ok, secure, addon
+    if key ~= nil then ok, secure, addon = pcall(issecurevariable, name, key)
+    else                ok, secure, addon = pcall(issecurevariable, name) end
+    if not ok then return "n/a" end
+    if secure then return "secure" end
+    return "TAINT:" .. tostring(addon or "?")
+end
+
+local function scanTaint(verbose)
+    local res = {
+        stamp    = (date and date("%Y-%m-%d %H:%M:%S")) or time(),
+        char     = (UnitName("player") or "?") .. "-" .. (GetRealmName() or "?"),
+        build    = select(2, GetBuildInfo()),
+        combat   = InCombatLockdown() and true or false,
+        globals  = {},
+        specials = {},
+        suspects = {},
+    }
+    for _, g in ipairs(TAINT_GLOBALS) do
+        local v = checkVar(g)
+        res.globals[g] = v
+        if v:sub(1, 5) == "TAINT" then res.suspects[#res.suspects + 1] = g .. " = " .. v end
+    end
+    if type(UISpecialFrames) == "table" then
+        for i = 1, #UISpecialFrames do
+            local name  = UISpecialFrames[i]
+            local frame = name and _G[name]
+            local v     = name and checkVar(name) or "n/a"
+            local shown = frame and frame.IsShown and frame:IsShown() or false
+            res.specials[#res.specials + 1] =
+                { idx = i, name = name, exists = frame ~= nil, shown = shown, taint = v }
+            if type(v) == "string" and v:sub(1, 5) == "TAINT" then
+                res.suspects[#res.suspects + 1] = ("UISpecialFrames[%d]=%s -> %s"):format(i, tostring(name), v)
+            end
+        end
+    end
+    OUIProbeDB.taint = OUIProbeDB.taint or {}
+    OUIProbeDB.taint[res.char] = res
+
+    if verbose then
+        print("|cff33ff99[OUI Probe taint]|r " .. res.char .. " build " .. tostring(res.build) ..
+            (res.combat and " |cffff8800(in combat)|r" or ""))
+        for _, g in ipairs(TAINT_GLOBALS) do
+            local v   = res.globals[g]
+            local col = (v == "secure") and "|cff66ff66" or "|cffff4444"
+            print(("   %s%s|r = %s"):format(col, g, tostring(v)))
+        end
+        if #res.suspects > 0 then
+            print("|cffff4444  SUSPECTS (persistently tainted):|r")
+            for _, s in ipairs(res.suspects) do print("   - " .. s) end
+        else
+            print("|cff66ff66  no PERSISTENT taint on the ESC chain right now.|r")
+            print("   If ESC->Logout still fails, the cascade is contextual:")
+            print("   /console taintLog 2  ->  reproduce  ->  read Logs/taint.log")
+        end
+        print(("  %d special frames scanned; saved to OUIProbeDB.taint['%s'].")
+            :format(#res.specials, res.char))
+        print("  /reload to flush, then send the OUI_Probe.lua SavedVariables file.")
+    end
+    return res
+end
+
 f:RegisterEvent("PLAYER_ENTERING_WORLD")
 f:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
 f:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
@@ -176,5 +259,124 @@ f:SetScript("OnEvent", function(_, event)
     C_Timer.After(2, function() runProbe(false) end)
 end)
 
+-- ===========================================================================
+--  Frame structure dumper (/ouiprobe dump <GlobalFrameName>)
+--  Walks a frame's regions + child frames (one level, plus grandchild names),
+--  resolving the FIELD KEY each object is stored under on its parent (e.g.
+--  MountJournal.MountDisplay) so reskins can target real names instead of
+--  guessing. Saved to OUIProbeDB.frames so it survives /reload and can be sent.
+-- ===========================================================================
+local DUMP_DEFAULTS = {
+    "CollectionsJournal", "MountJournal", "PetJournal",
+    "MailFrame", "InboxFrame", "OpenMailFrame", "SendMailFrame",
+}
+
+-- which key on `parent` holds `obj` (Blizzard stores named subframes as keys)
+local function fieldKey(parent, obj)
+    local ok, res = pcall(function()
+        for k, v in pairs(parent) do
+            if v == obj and type(k) == "string" then return k end
+        end
+    end)
+    return ok and res or nil
+end
+
+-- safe wrappers: GetChildren/GetRegions can raise on non-frame objects
+local function safeChildren(obj)
+    if not obj or not obj.GetChildren then return {} end
+    local ok, res = pcall(function() return { obj:GetChildren() } end)
+    return (ok and res) or {}
+end
+local function safeRegions(obj)
+    if not obj or not obj.GetRegions then return {} end
+    local ok, res = pcall(function() return { obj:GetRegions() } end)
+    return (ok and res) or {}
+end
+
+local function regionInfo(parent, r)
+    local layer = r.GetDrawLayer and select(1, r:GetDrawLayer())
+    return {
+        kind  = r.GetObjectType and r:GetObjectType(),
+        key   = fieldKey(parent, r),
+        gname = r.GetName and r:GetName() or nil,
+        layer = layer,
+        tex   = r.GetTexture and r:GetTexture() or nil,
+        atlas = r.GetAtlas and r:GetAtlas() or nil,
+        text  = r.GetText and r:GetText() or nil,
+        shown = r.IsShown and r:IsShown() or nil,
+    }
+end
+
+local function dumpOne(name, store)
+    local f = _G[name]
+    if not f or not f.GetObjectType then return false end
+    local rec = { name = name, regions = {}, children = {} }
+    for _, r in ipairs(safeRegions(f)) do
+        if r then
+            local ok, ri = pcall(regionInfo, f, r)
+            if ok and ri then rec.regions[#rec.regions + 1] = ri end
+        end
+    end
+    for _, c in ipairs(safeChildren(f)) do
+        if c then
+            local kids = {}
+            for _, g in ipairs(safeChildren(c)) do
+                if g then kids[#kids + 1] = fieldKey(c, g) or (g.GetObjectType and g:GetObjectType()) or "?" end
+            end
+            rec.children[#rec.children + 1] = {
+                kind  = c.GetObjectType and c:GetObjectType(),
+                key   = fieldKey(f, c),
+                gname = c.GetName and c:GetName() or nil,
+                shown = c.IsShown and c:IsShown() or nil,
+                grand = kids,
+            }
+        end
+    end
+    store[name] = rec
+    return rec
+end
+
+local function dumpFrame(arg)
+    OUIProbeDB.frames = OUIProbeDB.frames or {}
+    local list = (arg and arg ~= "") and { arg } or DUMP_DEFAULTS
+    local hits = 0
+    for _, name in ipairs(list) do
+        local ok, rec = pcall(dumpOne, name, OUIProbeDB.frames)
+        if not ok then rec = nil end
+        if rec then
+            hits = hits + 1
+            print(("|cff33ff99[OUI dump]|r %s: %d regions, %d children")
+                :format(name, #rec.regions, #rec.children))
+            -- print the texture/border regions (the usual reskin targets)
+            for _, r in ipairs(rec.regions) do
+                if r.kind == "Texture" then
+                    print(("   tex key=%s layer=%s name=%s atlas=%s")
+                        :format(tostring(r.key), tostring(r.layer),
+                                tostring(r.gname), tostring(r.atlas or r.tex)))
+                end
+            end
+            for _, c in ipairs(rec.children) do
+                print(("   child key=%s name=%s shown=%s")
+                    :format(tostring(c.key), tostring(c.gname), tostring(c.shown)))
+            end
+        else
+            print("|cffff8800[OUI dump]|r not found / not loaded: " .. name)
+        end
+    end
+    print(("|cff33ff99[OUI dump]|r %d frame(s) saved to OUIProbeDB.frames. /reload, then send the file.")
+        :format(hits))
+end
+
 SLASH_OUIPROBE1 = "/ouiprobe"
-SlashCmdList["OUIPROBE"] = function() runProbe(true) end
+SlashCmdList["OUIPROBE"] = function(msg)
+    msg = msg or ""
+    local cmd, arg = msg:match("^%s*(%S*)%s*(.-)%s*$")
+    cmd = (cmd or ""):lower()
+    if cmd == "taint" then
+        scanTaint(true)
+    elseif cmd == "dump" then
+        dumpFrame(arg)            -- frame name is case-sensitive; don't lower it
+    else
+        runProbe(true)
+    end
+end

@@ -435,7 +435,7 @@ local function BuildStats()
     f:SetClampedToScreen(true); f:Hide()
 
     local bg = f:CreateTexture(nil, "BACKGROUND"); bg:SetAllPoints()
-    bg:SetColorTexture(0.05, 0.05, 0.06, 0.95); Border(f)
+    OldschoolUI.RegisterSkinBg(bg, 0.95); Border(f)
 
     local title = f:CreateFontString(nil, "OVERLAY")
     title:SetFont(Font(), 14, "OUTLINE"); title:SetPoint("TOP", 0, -8)

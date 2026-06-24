@@ -1,0 +1,28 @@
+## Interface: 50504
+## Title: OldschoolUI
+## Notes: OldschoolUI - a clean MoP-Classic UI suite. Core.
+## Author: Lyonthedragon
+## Version: @project-version@
+## X-Curse-Project-ID: 1574573
+## SavedVariables: OldschoolUIDB
+## X-Category: User Interface
+## IconTexture: Interface\AddOns\OldschoolUI\media\oui-logo
+
+# --- Embedded libraries (Ace3) ---
+Libs\LibStub\LibStub.lua
+Libs\CallbackHandler-1.0\CallbackHandler-1.0.lua
+Libs\AceAddon-3.0\AceAddon-3.0.lua
+Libs\AceEvent-3.0\AceEvent-3.0.lua
+Libs\AceDB-3.0\AceDB-3.0.lua
+
+# --- Pass 1: Foundation + i18n + Theme ---
+Core\Bootstrap.lua
+Core\Locale.lua
+Locales\deDE.lua
+Core\Theme.lua
+Core\Widgets.lua
+Core\Options.lua
+Core\Mover.lua
+Core\Subsystems.lua
+Core\Media.lua
+Core\ModuleApi.lua
